@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AO3 Tagging and Notes
-// @version      8.0.1
+// @version      1.0.1
 // @description  Tag AO3 works with Google sync for cross-device data
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
@@ -51,6 +51,7 @@
         static dbVersion = 1;
         static storeName = 'data';
         static db = null;
+        static migrationCompleted = false;
 
         static async initDB() {
             if (this.db) return this.db;
@@ -72,6 +73,77 @@
                     }
                 };
             });
+        }
+
+        // Migration function to move data from localStorage to IndexedDB
+        static async migrateFromLocalStorage() {
+            if (this.migrationCompleted) return;
+
+            console.log('Checking for localStorage data to migrate...');
+            
+            const keysToMigrate = Object.values(KEYS);
+            let migrationCount = 0;
+
+            for (const key of keysToMigrate) {
+                try {
+                    const localData = localStorage.getItem(key);
+                    if (localData) {
+                        // Check if data already exists in IndexedDB
+                        const existingData = await this.load(key, null);
+                        if (existingData === null || (typeof existingData === 'object' && Object.keys(existingData).length === 0)) {
+                            // Parse and save to IndexedDB
+                            const parsedData = JSON.parse(localData);
+                            await this.save(key, parsedData);
+                            migrationCount++;
+                            console.log(`Migrated ${key} from localStorage to IndexedDB`);
+                        } else {
+                            console.log(`Data for ${key} already exists in IndexedDB, skipping migration`);
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error migrating ${key}:`, error);
+                }
+            }
+
+            if (migrationCount > 0) {
+                console.log(`Successfully migrated ${migrationCount} data sets from localStorage to IndexedDB`);
+                
+                // Optionally show user notification
+                if (migrationCount > 0) {
+                    setTimeout(() => {
+                        const notification = document.createElement('div');
+                        notification.style.cssText = `
+                            position: fixed;
+                            top: 20px;
+                            right: 20px;
+                            background: #4CAF50;
+                            color: white;
+                            padding: 15px 20px;
+                            border-radius: 5px;
+                            z-index: 100001;
+                            font-size: 14px;
+                            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+                            max-width: 300px;
+                        `;
+                        notification.innerHTML = `
+                            <strong>AO3 Tagging & Notes</strong><br>
+                            Successfully migrated your data to improved storage!<br>
+                            <span style="font-size: 12px; opacity: 0.9;">Migrated ${migrationCount} data sets</span>
+                        `;
+                        document.body.appendChild(notification);
+
+                        setTimeout(() => {
+                            notification.style.transition = 'opacity 0.5s';
+                            notification.style.opacity = '0';
+                            setTimeout(() => notification.remove(), 500);
+                        }, 5000);
+                    }, 1000);
+                }
+            } else {
+                console.log('No localStorage data found to migrate');
+            }
+
+            this.migrationCompleted = true;
         }
 
         static async load(key, fallback = {}) {
@@ -419,9 +491,14 @@ async showSelectionModal(tag, allIds, lastDownloadTime) {
 
         loadingModal.remove();
 
+        // Get the actual downloaded works history to check individual fics
+        const downloadedWorksHistory = await Storage.loadDownloadHistory();
+        const downloadedFicsForTag = downloadedWorksHistory[`${tag}_downloaded_fics`] || [];
+
         // Build works list HTML
         const worksList = workData.map(({ ficId, workId, metadata }) => {
-            const isNew = !tagHistory || tagHistory === 0;
+            // Check if THIS specific fic was downloaded before, not just if the tag was downloaded
+            const isNew = !downloadedFicsForTag.includes(ficId);
             return `
 <div class="fic-item" style="display:flex;align-items:center;gap:10px;padding:8px;border-left:4px solid #666;border-radius:4px;margin:4px 0;background:#44415a40;cursor:pointer;">
     <input type="checkbox" class="work-checkbox" data-fic-id="${ficId}" ${isNew ? 'checked' : ''}>
@@ -522,8 +599,9 @@ ficItems.forEach(item => {
             updateSelectedCount();
         });
         modal.querySelector('#select-new').addEventListener('click', () => {
+            const downloadedFicsForTag = downloadedWorksHistory[`${tag}_downloaded_fics`] || [];
             checkboxes.forEach(cb => {
-                const isNew = !tagHistory || tagHistory === 0;
+                const isNew = !downloadedFicsForTag.includes(cb.dataset.ficId);
                 cb.checked = isNew;
             });
             updateSelectedCount();
@@ -547,6 +625,22 @@ ficItems.forEach(item => {
         async finalizeDownloads() {
             if (this.currentTag) {
                 await this.setLastDownloadTime(this.currentTag, Date.now());
+                
+                // Track which specific fics were downloaded
+                const downloadHistory = await Storage.loadDownloadHistory();
+                const downloadedFicsKey = `${this.currentTag}_downloaded_fics`;
+                if (!downloadHistory[downloadedFicsKey]) {
+                    downloadHistory[downloadedFicsKey] = [];
+                }
+                
+                // Add the downloaded fic IDs to the history
+                this.downloadQueue.forEach(ficId => {
+                    if (!downloadHistory[downloadedFicsKey].includes(ficId)) {
+                        downloadHistory[downloadedFicsKey].push(ficId);
+                    }
+                });
+                
+                await Storage.saveDownloadHistory(downloadHistory);
             }
 
             this.progressModal?.remove();

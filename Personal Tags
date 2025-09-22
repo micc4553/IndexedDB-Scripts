@@ -4,8 +4,8 @@
 // @description  Add personal tags to AO3 works with customizable links (Firefox 115 ESR Compatible)
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
-// @updateURL    https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Personal%20Tags
-// @downloadURL  https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Personal%20Tags
+// @updateURL    https://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Personal%20Tags
+// @downloadURL  https://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Personal%20Tags
 // ==/UserScript==
 
 (function() {

@@ -1,0 +1,796 @@
+// ==UserScript==
+// @name         AO3 Sync Manager
+// @version      1.0
+// @description  Sync AO3 tagging and notes data across devices using Google Apps Script
+// @match        https://archiveofourown.org/*
+// @icon         https://archiveofourown.org/favicon.ico
+// @updateURL    https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Sync%20Manager
+// @downloadURL  https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Sync%20Manager
+// @grant        GM_xmlhttpRequest
+// ==/UserScript==
+
+(function () {
+    "use strict";
+
+    // Constants for storage keys
+    const KEYS = {
+        LABELS: "ao3_fic_labels",
+        NOTES: "ao3_fic_notes",
+        AUTHOR_NOTES: "ao3_author_notes",
+        SETTINGS: "ao3_sync_settings",
+        LAST_SYNC: "ao3_last_sync",
+        DELETED_NOTES: "ao3_deleted_notes",
+        DELETED_AUTHOR_NOTES: "ao3_deleted_author_notes",
+        PERSONAL_TAGS: "ao3_personal_tags",
+        TAG_LOOKUP: "ao3_tag_lookup",
+        TAG_LINKS: "ao3_tag_links",
+      DELETED_LABELS: "ao3_deleted_labels",
+        DELETED_PERSONAL_TAGS: "ao3_deleted_personal_tags",
+        DELETED_TAG_LOOKUP: "ao3_deleted_tag_lookup"
+    };
+// IndexedDB Storage Class
+class IndexedDBStorage {
+    static dbName = 'AO3PersonalTagsDB';
+    static dbVersion = 1;
+    static storeName = 'data';
+    static db = null;
+
+    static async initDB() {
+        if (this.db) return this.db;
+
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(this.dbName, this.dbVersion);
+
+            request.onerror = () => reject(request.error);
+
+            request.onsuccess = () => {
+                this.db = request.result;
+                resolve(this.db);
+            };
+
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(this.storeName)) {
+                    db.createObjectStore(this.storeName);
+                }
+            };
+        });
+    }
+
+    static async load(key, fallback = {}) {
+        try {
+            const db = await this.initDB();
+            const transaction = db.transaction([this.storeName], 'readonly');
+            const store = transaction.objectStore(this.storeName);
+            const request = store.get(key);
+
+            return new Promise((resolve) => {
+                request.onsuccess = () => {
+                    const result = request.result;
+                    resolve(result !== undefined ? result : fallback);
+                };
+                request.onerror = () => resolve(fallback);
+            });
+        } catch {
+            return fallback;
+        }
+    }
+
+    static async save(key, value) {
+        try {
+            const db = await this.initDB();
+            const transaction = db.transaction([this.storeName], 'readwrite');
+            const store = transaction.objectStore(this.storeName);
+            store.put(value, key);
+
+            return new Promise((resolve, reject) => {
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = () => reject(transaction.error);
+            });
+        } catch (error) {
+            console.error('Failed to save to IndexedDB:', error);
+        }
+    }
+}
+
+    // Storage utility functions
+    class Storage {
+        static load(key, fallback = {}) {
+            try {
+                return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
+            } catch {
+                return fallback;
+            }
+        }
+
+        static save(key, value) {
+            localStorage.setItem(key, JSON.stringify(value));
+        }
+
+        static loadLabels() { return this.load(KEYS.LABELS); }
+        static saveLabels(v) { this.save(KEYS.LABELS, v); }
+        static loadNotes() { return this.load(KEYS.NOTES); }
+        static saveNotes(v) { this.save(KEYS.NOTES, v); }
+        static loadAuthorNotes() { return this.load(KEYS.AUTHOR_NOTES); }
+        static saveAuthorNotes(v) { this.save(KEYS.AUTHOR_NOTES, v); }
+        static loadSyncSettings() { return this.load(KEYS.SETTINGS); }
+        static saveSyncSettings(v) { this.save(KEYS.SETTINGS, v); }
+      static loadDeletedLabels() { return this.load(KEYS.DELETED_LABELS); }
+static saveDeletedLabels(v) { this.save(KEYS.DELETED_LABELS, v); }
+        static loadDeletedNotes() { return this.load(KEYS.DELETED_NOTES); }
+        static saveDeletedNotes(v) { this.save(KEYS.DELETED_NOTES, v); }
+        static loadDeletedAuthorNotes() { return this.load(KEYS.DELETED_AUTHOR_NOTES); }
+        static saveDeletedAuthorNotes(v) { this.save(KEYS.DELETED_AUTHOR_NOTES, v); }
+        static loadPersonalTags() { return this.load(KEYS.PERSONAL_TAGS); }
+        static savePersonalTags(v) { this.save(KEYS.PERSONAL_TAGS, v); }
+        static loadTagLookup() { return this.load(KEYS.TAG_LOOKUP); }
+        static saveTagLookup(v) { this.save(KEYS.TAG_LOOKUP, v); }
+        static loadTagLinks() { return this.load(KEYS.TAG_LINKS); }
+        static saveTagLinks(v) { this.save(KEYS.TAG_LINKS, v); }
+static loadDeletedPersonalTags() { return this.load(KEYS.DELETED_PERSONAL_TAGS); }
+static saveDeletedPersonalTags(v) { this.save(KEYS.DELETED_PERSONAL_TAGS, v); }
+static loadDeletedTagLookup() { return this.load(KEYS.DELETED_TAG_LOOKUP); }
+static saveDeletedTagLookup(v) { this.save(KEYS.DELETED_TAG_LOOKUP, v); }
+    }
+
+    // Validation utilities
+    const Validator = {
+        isValidWorkId(id) {
+            if (!id || typeof id !== "string") {
+                console.error(`Invalid workId: not a string (${id})`);
+                return false;
+            }
+            if (id.includes('null') || id.includes('undefined') || id.includes('NaN')) {
+                console.error(`Invalid workId: contains null/undefined/NaN (${id})`);
+                return false;
+            }
+            if (id.trim() === '' || id.length > 9) {
+                console.error(`Invalid workId: empty or too long (${id})`);
+                return false;
+            }
+            if (!/^\d+$/.test(id)) {
+                console.error(`Invalid workId: must be numeric only (${id})`);
+                return false;
+            }
+            return true;
+        },
+
+        isValidAuthorId(id) {
+            if (!id || typeof id !== "string") {
+                console.error(`Invalid authorId: not a string (${id})`);
+                return false;
+            }
+            if (id.includes('null') || id.includes('undefined') || id.includes('NaN')) {
+                console.error(`Invalid authorId: contains null/undefined/NaN (${id})`);
+                return false;
+            }
+            if (id.trim() === '' || id.length > 100) {
+                console.error(`Invalid authorId: empty or too long (${id})`);
+                return false;
+            }
+            if (/^\d+$/.test(id)) {
+                console.error(`Invalid authorId: should not be numeric only (${id})`);
+                return false;
+            }
+            if (!/^[a-zA-Z0-9_-]+(_[a-zA-Z0-9_-]+)?$/.test(id)) {
+                console.error(`Invalid authorId: contains invalid characters (${id})`);
+                return false;
+            }
+            return true;
+        },
+
+        isValidTagName(tag) {
+            if (!tag || typeof tag !== "string") {
+                console.error(`Invalid tag: not a string (${tag})`);
+                return false;
+            }
+            if (tag.trim() === '' || tag.length > 200) {
+                console.error(`Invalid tag: empty or too long (${tag})`);
+                return false;
+            }
+            return true;
+        }
+    };
+
+    // UI Utilities
+    const UI = {
+        formatDateTime: (d) => d.toLocaleString(undefined, {
+            year: "numeric", month: "short", day: "numeric",
+            hour: "2-digit", minute: "2-digit"
+        }),
+
+        createButton(text, styles = {}, onclick = null) {
+            const btn = document.createElement("button");
+            btn.textContent = text;
+            Object.assign(btn.style, {
+                padding: "6px 12px",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+                ...styles
+            });
+            if (onclick) btn.addEventListener("click", onclick);
+            return btn;
+        },
+
+        createModal(content, title = "") {
+            const modal = document.createElement("div");
+            modal.innerHTML = `
+                <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center;">
+                    <div style="background:#232136CC;color:#fff;padding:20px;border-radius:8px;max-width:90%;max-height:80%;border:1px solid #ddd;overflow-y:auto;">
+                        ${title ? `<h3 style="margin-top:0;color:#fff;">${title}</h3>` : ""}
+                        ${content}
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            // Close on backdrop click
+            modal.addEventListener("click", (e) => {
+                if (e.target === modal || e.target.style.background?.includes("rgba")) {
+                    modal.remove();
+                }
+            });
+
+            return modal;
+        },
+
+        addHoverEffect(element, hoverStyles = {}, normalStyles = {}) {
+            element.addEventListener("mouseenter", () => Object.assign(element.style, hoverStyles));
+            element.addEventListener("mouseleave", () => Object.assign(element.style, normalStyles));
+        }
+    };
+
+    // Google Sync Manager
+    class GoogleSyncManager {
+        constructor() {
+            this.settings = Storage.loadSyncSettings();
+            this.syncInterval = (this.settings.syncInterval || 60) * 1000;
+            this.isSyncing = false;
+            this.syncTimer = null;
+            this.timeUntilNextSync = 0;
+
+            window.syncManager = this;
+
+            if (this.settings.enabled && this.settings.sheetUrl) {
+                this.initSync();
+            }
+        }
+
+        initSync() {
+            this.createSyncWidget();
+            this.startSyncTimer();
+        }
+
+        createSyncWidget() {
+            if (document.getElementById("ao3-sync-widget")) return;
+
+            // Add CSS animation for spinning
+            const style = document.createElement("style");
+            style.textContent = `
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            `;
+            document.head.appendChild(style);
+
+            const widget = document.createElement("div");
+            widget.id = "ao3-sync-widget";
+            widget.style.cssText = `
+                position:fixed; bottom:15px; left:10px; z-index:10000;
+                display:flex; align-items:center; gap:4px; padding:3px 5px;
+                background:#fff; border:1px solid #ddd; border-radius:16px;
+                cursor:pointer; font:12px sans-serif; color:#666;
+                box-shadow:0 2px 8px rgba(0,0,0,0.1); transition:all 0.2s;
+                opacity:${this.settings.syncWidgetOpacity || 0.5};
+            `;
+
+            widget.innerHTML = `
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+                </svg>
+                <span id="sync-status">Sync</span>
+                <span id="sync-countdown" style="font-size:11px;color:#999;margin-left:4px;">0s</span>
+            `;
+
+            // Hide widget initially
+            widget.style.display = "none";
+
+            document.body.appendChild(widget);
+
+            widget.addEventListener("click", () => {
+                if (!this.isSyncing) this.performSync();
+            });
+
+            UI.addHoverEffect(widget,
+                { opacity: "1", background: "#f8f9fa", borderColor: "#0066cc", transform: "translateY(-1px)" },
+                { opacity: "0.5", background: "#fff", borderColor: "#ddd", transform: "" }
+            );
+
+            this.startCountdownTimer();
+        }
+
+        startSyncTimer() {
+            if (this.syncTimer) clearInterval(this.syncTimer);
+
+            const lastSync = parseInt(localStorage.getItem(KEYS.LAST_SYNC)) || 0;
+            const timeSinceLastSync = Date.now() - lastSync;
+            const timeUntilNextSync = Math.max(0, this.syncInterval - timeSinceLastSync);
+
+            this.timeUntilNextSync = Math.ceil(timeUntilNextSync / 1000);
+
+            // Show widget once countdown is calculated
+            const widget = document.getElementById("ao3-sync-widget");
+            if (widget) {
+                widget.style.display = "flex"; // Show the widget
+                this.updateWidget(); // Update with proper countdown
+            }
+
+            if (timeUntilNextSync <= 0) {
+                this.performSync();
+                this.timeUntilNextSync = this.syncInterval / 1000;
+            }
+
+            this.syncTimer = setInterval(() => {
+                this.timeUntilNextSync = this.syncInterval / 1000;
+                this.performSync();
+            }, this.syncInterval);
+        }
+
+        startCountdownTimer() {
+            setInterval(() => {
+                // Only update countdown if not currently syncing
+                if (!this.isSyncing && this.timeUntilNextSync > 0) {
+                    this.timeUntilNextSync--;
+                }
+                // Only call updateWidget if not syncing
+                if (!this.isSyncing) {
+                    this.updateWidget();
+                }
+            }, 1000);
+        }
+
+        updateWidget(status = "idle") {
+            const widget = document.getElementById("ao3-sync-widget");
+            if (!widget) return;
+
+            const statusText = widget.querySelector("#sync-status");
+            const countdown = widget.querySelector("#sync-countdown");
+
+            let countdownText = this.timeUntilNextSync > 0
+                ? this.timeUntilNextSync > 60
+                    ? `${Math.floor(this.timeUntilNextSync / 60)}m ${this.timeUntilNextSync % 60}s`
+                    : `${this.timeUntilNextSync}s`
+                : "now";
+
+            switch (status) {
+                case "syncing":
+                    statusText.textContent = "Syncing...";
+                    countdown.textContent = "";
+                    widget.style.background = "#e3f2fd";
+                    // Add spinning animation to the SVG
+                    const svg = widget.querySelector("svg");
+                    svg.style.animation = "spin 1s linear infinite";
+                    break;
+                case "success":
+                    statusText.textContent = "Synced!";
+                    countdown.textContent = "";
+                    widget.style.background = "#e8f5e8";
+                    // Stop spinning
+                    const successSvg = widget.querySelector("svg");
+                    successSvg.style.animation = "none";
+                    setTimeout(() => this.updateWidget(), 5000);
+                    break;
+                case "error":
+                    statusText.textContent = "Error";
+                    countdown.textContent = "";
+                    widget.style.background = "#ffebee";
+                    // Stop spinning
+                    const errorSvg = widget.querySelector("svg");
+                    errorSvg.style.animation = "none";
+                    setTimeout(() => this.updateWidget(), 5000);
+                    break;
+                default:
+                    statusText.textContent = "Sync";
+                    countdown.textContent = countdownText;
+                    widget.style.background = "#fff";
+                    // Stop spinning
+                    const defaultSvg = widget.querySelector("svg");
+                    defaultSvg.style.animation = "none";
+                    break;
+            }
+        }
+
+async performSync() {
+    await IndexedDBStorage.initDB();
+  if (this.isSyncing || !this.settings.sheetUrl) return;
+
+            this.isSyncing = true;
+            this.updateWidget("syncing");
+
+            try {
+                const syncData = {
+                    action: "sync",
+                    data: {
+                        labels: localStorage.getItem(KEYS.LABELS) || "{}",
+                        notes: localStorage.getItem(KEYS.NOTES) || "{}",
+                        authorNotes: localStorage.getItem(KEYS.AUTHOR_NOTES) || "{}",
+                        deletedNotes: Object.keys(Storage.loadDeletedNotes()),
+                        deletedAuthorNotes: Object.keys(Storage.loadDeletedAuthorNotes()),
+personalTags: JSON.stringify(await IndexedDBStorage.load(KEYS.PERSONAL_TAGS, {})),
+tagLookup: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LOOKUP, {})),
+tagLinks: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LINKS, {})),
+        deletedPersonalTags: Object.keys(Storage.loadDeletedPersonalTags()),
+        deletedTagLookup: Object.keys(Storage.loadDeletedTagLookup()),
+                        timestamp: Date.now(),
+                    },
+                };
+
+                const response = await this.sendRequest(syncData);
+
+                if (response.success) {
+                    if (response.data) {
+    await this.mergeData(response.data);
+}
+                    localStorage.setItem(KEYS.LAST_SYNC, Date.now().toString());
+                    this.timeUntilNextSync = this.syncInterval / 1000;
+                    this.updateWidget("success");
+                } else {
+                    throw new Error(response.error || "Sync failed");
+                }
+            } catch (error) {
+                console.error("[AO3 Sync] Error:", error);
+                this.updateWidget("error");
+            } finally {
+                this.isSyncing = false;
+            }
+        }
+
+        sendRequest(data) {
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: "POST",
+                    url: this.settings.sheetUrl,
+                    headers: { "Content-Type": "application/json" },
+                    data: JSON.stringify(data),
+                    timeout: 15000,
+                    onload: (response) => {
+                        try {
+                            resolve(JSON.parse(response.responseText));
+                        } catch {
+                            reject(new Error("Invalid response"));
+                        }
+                    },
+                    onerror: () => reject(new Error("Network error")),
+                    ontimeout: () => reject(new Error("Request timeout"))
+                });
+            });
+        }
+
+        async mergeData(serverData) {
+            // Merge labels
+            if (serverData.labels) {
+                const currentLabels = Storage.loadLabels();
+                const serverLabels = JSON.parse(serverData.labels);
+                const mergedLabels = { ...currentLabels };
+
+                Object.entries(serverLabels).forEach(([id, tag]) => {
+                    if (Validator.isValidWorkId(id) && !currentLabels[id]) {
+                        mergedLabels[id] = tag;
+                    }
+                });
+
+                Storage.saveLabels(mergedLabels);
+            }
+
+            // Merge notes
+            if (serverData.notes) {
+                const currentNotes = Storage.loadNotes();
+                const serverNotes = JSON.parse(serverData.notes);
+                const mergedNotes = { ...currentNotes };
+
+                Object.entries(serverNotes).forEach(([id, note]) => {
+                    if (Validator.isValidWorkId(id) && !currentNotes[id]) {
+                        mergedNotes[id] = note;
+                    }
+                });
+
+                Storage.saveNotes(mergedNotes);
+            }
+
+            // Merge author notes
+            if (serverData.authorNotes) {
+                const currentAuthorNotes = Storage.loadAuthorNotes();
+                const serverAuthorNotes = JSON.parse(serverData.authorNotes);
+                const mergedAuthorNotes = { ...currentAuthorNotes };
+
+                Object.entries(serverAuthorNotes).forEach(([id, note]) => {
+                    if (Validator.isValidAuthorId(id) && !currentAuthorNotes[id]) {
+                        mergedAuthorNotes[id] = note;
+                    }
+                });
+
+                Storage.saveAuthorNotes(mergedAuthorNotes);
+            }
+
+            // Merge personal tags
+            if (serverData.personalTags) {
+                const currentPersonalTags = await IndexedDBStorage.load(KEYS.PERSONAL_TAGS, {});
+                const serverPersonalTags = JSON.parse(serverData.personalTags);
+                const mergedPersonalTags = { ...currentPersonalTags };
+
+                Object.entries(serverPersonalTags).forEach(([workId, tags]) => {
+                    if (Validator.isValidWorkId(workId)) {
+                        // Merge tags arrays, removing duplicates
+                        const currentTags = currentPersonalTags[workId] || [];
+                        const combinedTags = [...new Set([...currentTags, ...tags])];
+                        mergedPersonalTags[workId] = combinedTags;
+                    }
+                });
+
+                await IndexedDBStorage.save(KEYS.PERSONAL_TAGS, mergedPersonalTags);
+            }
+
+            // Merge tag to works mapping
+            if (serverData.tagLookup) {
+                const currentTagLookup = await IndexedDBStorage.load(KEYS.TAG_LOOKUP, {});
+                const serverTagLookup = JSON.parse(serverData.tagLookup);
+                const mergedTagLookup = { ...currentTagLookup };
+
+                Object.entries(serverTagLookup).forEach(([tagName, works]) => {
+                    if (Validator.isValidTagName(tagName)) {
+                        const currentWorks = currentTagLookup[tagName] || {};
+                        const mergedWorks = { ...currentWorks };
+
+                        Object.entries(works).forEach(([workId, workInfo]) => {
+                            if (Validator.isValidWorkId(workId)) {
+                                mergedWorks[workId] = workInfo;
+                            }
+                        });
+
+                        mergedTagLookup[tagName] = mergedWorks;
+                    }
+                });
+
+                await IndexedDBStorage.save(KEYS.TAG_LOOKUP, mergedTagLookup);
+            }
+
+            // Merge tag links
+            if (serverData.tagLinks) {
+                const currentTagLinks = Storage.loadTagLinks();
+                const serverTagLinks = JSON.parse(serverData.tagLinks);
+                const mergedTagLinks = { ...currentTagLinks, ...serverTagLinks };
+                Storage.saveTagLinks(mergedTagLinks);
+            }
+        }
+    }
+
+  function trackDeletedTagWork(workId) {
+    var deletedWorks = JSON.parse(localStorage.getItem('ao3_deleted_personal_tag_works') || '[]');
+    if (deletedWorks.indexOf(workId) === -1) {
+        deletedWorks.push(workId);
+        localStorage.setItem('ao3_deleted_personal_tag_works', JSON.stringify(deletedWorks));
+    }
+}
+
+function trackDeletedTag(tagName) {
+    var deletedTags = JSON.parse(localStorage.getItem('ao3_deleted_tag_lookup_tags') || '[]');
+    if (deletedTags.indexOf(tagName) === -1) {
+        deletedTags.push(tagName);
+        localStorage.setItem('ao3_deleted_tag_lookup_tags', JSON.stringify(deletedTags));
+    }
+}
+
+    // Settings panel
+    function createSettingsPanel() {
+        const settings = Storage.loadSyncSettings();
+
+        const modal = UI.createModal(`
+<div style="margin:15px 0;display:flex;gap:10px;width:100%;">
+    <button id="clear-old-deletions" style="background:#8b7355;color:white;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;flex-grow:1;flex-basis:auto;">Clear Deletions</button>
+    <button id="export-data" style="background:#7a9bb8;color:white;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;flex-grow:1;flex-basis:auto;">Export Data</button>
+    <button id="import-data" style="background:#8b7db8;color:white;border:none;padding:4px 12px;border-radius:4px;cursor:pointer;flex-grow:1;flex-basis:auto;">Import Data</button>
+    <input type="file" id="import-file" accept=".json" style="display:none;">
+</div>
+                <div style="margin:15px 0;">
+                    <label style="color:#fff;display:flex;align-items:center;gap:8px;margin:20px 0;">
+                        <input type="checkbox" id="sync-enabled" ${settings.enabled ? "checked" : ""}>
+                        Enable Google Sync
+                    </label>
+                    <label style="display:block;margin:20px 0;color:#fff;">
+                        Apps Script URL:
+                        <input type="text" id="sheet-url" value="${settings.sheetUrl || ""}"
+                               style="width:100%;padding:6px;margin-top:10px;border:1px solid #ccc;border-radius:8px;">
+                    </label>
+                    <label style="display:block;margin:20px 0;color:#fff;">
+                        Sync Interval (seconds):
+                        <input type="number" id="sync-interval" value="${settings.syncInterval || 60}"
+                               min="30" max="3600" style="width:80px;padding:6px;margin-top:4px;border:1px solid #ccc;border-radius:8px;">
+                    </label>
+                    <label style="display:block;margin:20px 0;color:#fff;">
+                        Widget Opacity:
+                        <input type="range" id="widget-opacity" value="${settings.syncWidgetOpacity || 0.5}"
+                               min="0.1" max="1" step="0.1" style="width:100%;margin-top:4px;">
+                        <span id="opacity-value">${settings.syncWidgetOpacity || 0.5}</span>
+                    </label>
+                </div>
+
+<div style="display:flex;gap:10px;margin-top:20px;">
+    <button id="save-settings" style="background:#6b8a7a;color:white;border:none;padding:4px 16px;border-radius:4px;cursor:pointer;flex:1;">Save Settings</button>
+    <button id="close-settings" style="background:#a85c6b;color:white;border:none;padding:4px 16px;border-radius:4px;cursor:pointer;flex:1;">Close</button>
+</div>
+            </div>
+        `, "Sync Settings");
+
+        // Opacity slider update
+        const opacitySlider = modal.querySelector("#widget-opacity");
+        const opacityValue = modal.querySelector("#opacity-value");
+        opacitySlider.addEventListener("input", () => {
+            opacityValue.textContent = opacitySlider.value;
+        });
+
+        // Event listeners
+modal.querySelector("#clear-old-deletions").addEventListener("click", async () => {
+    // Create modal that blocks clicks during sync
+    const progressModal = document.createElement("div");
+    progressModal.innerHTML = `
+        <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:100001;display:flex;align-items:center;justify-content:center;">
+            <div style="background:#232136CC;color:#fff;padding:30px;border-radius:8px;text-align:center;min-width:250px;">
+                <div>Syncing...</div>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(progressModal);
+
+    try {
+        // Force sync first
+        if (window.syncManager && !window.syncManager.isSyncing) {
+            await window.syncManager.performSync();
+        }
+
+        const deletedNotes = Storage.loadDeletedNotes();
+        const deletedAuthorNotes = Storage.loadDeletedAuthorNotes();
+        const deletedLabels = Storage.loadDeletedLabels();
+        const totalCleared = Object.keys(deletedNotes).length +
+                            Object.keys(deletedAuthorNotes).length +
+                            Object.keys(deletedLabels).length;
+
+        Storage.saveDeletedNotes({});
+        Storage.saveDeletedAuthorNotes({});
+        Storage.saveDeletedLabels({});
+
+        // Update the innermost div content
+        const innerDiv = progressModal.querySelector('div div div');
+        innerDiv.innerHTML = `
+            <div style="margin-bottom:20px;">Cleared all ${totalCleared} deletion records.</div>
+            <button id="close-clear-modal" style="background:#4CAF50;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">OK</button>
+        `;
+
+        // Add click listener to the OK button
+        innerDiv.querySelector('#close-clear-modal').addEventListener('click', () => {
+            progressModal.remove();
+        });
+
+    } catch (error) {
+        const innerDiv = progressModal.querySelector('div div div');
+        innerDiv.innerHTML = `
+            <div style="margin-bottom:20px;">Error: ${error.message}</div>
+            <button id="close-error-modal" style="background:#f44336;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">OK</button>
+        `;
+
+        innerDiv.querySelector('#close-error-modal').addEventListener('click', () => {
+            progressModal.remove();
+        });
+    }
+});
+
+      modal.querySelector("#save-settings").addEventListener("click", () => {
+            const newSettings = {
+                ...settings,
+                enabled: modal.querySelector("#sync-enabled").checked,
+                sheetUrl: modal.querySelector("#sheet-url").value,
+                syncInterval: parseInt(modal.querySelector("#sync-interval").value),
+                syncWidgetOpacity: parseFloat(modal.querySelector("#widget-opacity").value)
+            };
+            Storage.saveSyncSettings(newSettings);
+            alert("Settings saved! Please reload the page for changes to take effect.");
+            modal.remove();
+        });
+
+        modal.querySelector("#close-settings").addEventListener("click", () => {
+            modal.remove();
+        });
+
+        // Export data
+        modal.querySelector("#export-data").addEventListener("click", async () => {
+            const exportData = {
+                labels: localStorage.getItem(KEYS.LABELS) || "{}",
+                notes: localStorage.getItem(KEYS.NOTES) || "{}",
+                authorNotes: localStorage.getItem(KEYS.AUTHOR_NOTES) || "{}",
+personalTags: JSON.stringify(await IndexedDBStorage.load(KEYS.PERSONAL_TAGS, {})),
+tagLookup: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LOOKUP, {})),
+tagLinks: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LINKS, {})),
+                exportDate: new Date().toISOString()
+            };
+
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ao3-data-export-${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        // Import data
+        modal.querySelector("#import-data").addEventListener("click", () => {
+            modal.querySelector("#import-file").click();
+        });
+
+        modal.querySelector("#import-file").addEventListener("change", (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const importData = JSON.parse(e.target.result);
+
+                    if (confirm(`Import data from ${importData.exportDate || 'unknown date'}? This will overwrite your current local data.`)) {
+                        localStorage.setItem(KEYS.LABELS, importData.labels || "{}");
+                        localStorage.setItem(KEYS.NOTES, importData.notes || "{}");
+                        localStorage.setItem(KEYS.AUTHOR_NOTES, importData.authorNotes || "{}");
+await IndexedDBStorage.save(KEYS.PERSONAL_TAGS, JSON.parse(importData.personalTags || "{}"));
+await IndexedDBStorage.save(KEYS.TAG_LOOKUP, JSON.parse(importData.tagLookup || "{}"));
+await IndexedDBStorage.save(KEYS.TAG_LINKS, JSON.parse(importData.tagLinks || "{}"));
+
+                        alert("Data imported successfully! Please reload the page.");
+                    }
+                } catch (error) {
+                    alert("Error importing data: " + error.message);
+                }
+            };
+            reader.readAsText(file);
+        });
+    }
+
+    // Add sync settings button to navigation
+    function addSyncButton() {
+        const nav = document.querySelector("ul.primary.navigation.actions") ||
+                   document.querySelector("ul.primary.navigation") ||
+                   document.querySelector("nav ul");
+
+        if (!nav || document.querySelector("#sync-settings-btn")) return;
+
+        const syncLi = document.createElement("li");
+        syncLi.innerHTML = '<a href="#" id="sync-settings-btn">Sync</a>';
+        nav.appendChild(syncLi);
+
+        syncLi.querySelector("a").addEventListener("click", (e) => {
+            e.preventDefault();
+            createSettingsPanel();
+        });
+    }
+
+    // Initialize sync manager
+    function initSyncManager() {
+
+        // Add sync button to navigation
+        addSyncButton();
+
+        // Initialize sync manager if enabled
+        const settings = Storage.loadSyncSettings();
+        if (settings.enabled && settings.sheetUrl) {
+            new GoogleSyncManager();
+        }
+    }
+
+    // Run initialization
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initSyncManager);
+    } else {
+        initSyncManager();
+    }
+
+})();

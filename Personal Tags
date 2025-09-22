@@ -1,0 +1,734 @@
+// ==UserScript==
+// @name         AO3 Personal Tags
+// @version      1.1.1
+// @description  Add personal tags to AO3 works
+// @match        https://archiveofourown.org/*
+// @icon         https://archiveofourown.org/favicon.ico
+// @updateURL    https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Personal%20Tags
+// @downloadURL  https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Personal%20Tags
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // Shared storage keys
+    const KEYS = {
+        PERSONAL_TAGS: "ao3_personal_tags",
+        TAG_LOOKUP: "ao3_tag_lookup"
+    };
+
+    // IndexedDB Storage Class
+    class Storage {
+        static dbName = 'AO3PersonalTagsDB';
+        static dbVersion = 1;
+        static storeName = 'data';
+        static db = null;
+
+        static async initDB() {
+            if (this.db) return this.db;
+            
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(this.dbName, this.dbVersion);
+                
+                request.onerror = () => reject(request.error);
+                
+                request.onsuccess = () => {
+                    this.db = request.result;
+                    resolve(this.db);
+                };
+                
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(this.storeName)) {
+                        db.createObjectStore(this.storeName);
+                    }
+                };
+            });
+        }
+
+        static async load(key, fallback = {}) {
+            try {
+                const db = await this.initDB();
+                const transaction = db.transaction([this.storeName], 'readonly');
+                const store = transaction.objectStore(this.storeName);
+                const request = store.get(key);
+                
+                return new Promise((resolve) => {
+                    request.onsuccess = () => {
+                        const result = request.result;
+                        resolve(result !== undefined ? result : fallback);
+                    };
+                    request.onerror = () => resolve(fallback);
+                });
+            } catch {
+                return fallback;
+            }
+        }
+
+        static async save(key, value) {
+            try {
+                const db = await this.initDB();
+                const transaction = db.transaction([this.storeName], 'readwrite');
+                const store = transaction.objectStore(this.storeName);
+                store.put(value, key);
+                
+                return new Promise((resolve, reject) => {
+                    transaction.oncomplete = () => resolve();
+                    transaction.onerror = () => reject(transaction.error);
+                });
+            } catch (error) {
+                console.error('Failed to save to IndexedDB:', error);
+            }
+        }
+    }
+
+  function isValidWorkId(id) {
+    if (!id || typeof id !== "string") return false;
+    if (id.includes('null') || id.includes('undefined') || id.includes('NaN')) return false;
+    if (id.trim() === '' || id.length > 8) return false;
+    return /^\d+$/.test(id);
+}
+
+    // Storage functions
+    async function getPersonalTags(workId) {
+        const tags = await Storage.load(KEYS.PERSONAL_TAGS, {});
+        return tags[workId] || [];
+    }
+
+async function savePersonalTags(workId, tags) {
+    if (!isValidWorkId(workId)) return;
+    const allTags = await Storage.load(KEYS.PERSONAL_TAGS, {});
+    allTags[workId] = tags;
+    await Storage.save(KEYS.PERSONAL_TAGS, allTags);
+}
+
+    async function getTagLookup() {
+        return await Storage.load(KEYS.TAG_LOOKUP, {});
+    }
+
+    async function saveTagLookup(tagLookup) {
+        await Storage.save(KEYS.TAG_LOOKUP, tagLookup);
+    }
+
+    function normalizeTag(tag) {
+        // Normalize tags to lowercase for consistent storage
+        return tag.toLowerCase().trim();
+    }
+
+    function capitalizeTag(tag) {
+        // Capitalize first letter of each word for display
+        return tag.split(' ').map(word =>
+            word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+        ).join(' ');
+    }
+
+    async function addWorkToTag(tag, workInfo) {
+        const normalizedTag = normalizeTag(tag);
+        const tagLookup = await getTagLookup();
+        if (!tagLookup[normalizedTag]) {
+            tagLookup[normalizedTag] = {};
+        }
+        tagLookup[normalizedTag][workInfo.id] = {
+            title: workInfo.title,
+            author: workInfo.author,
+            summary: workInfo.summary || '',
+            originalTag: tag // Store original for display
+        };
+        await saveTagLookup(tagLookup);
+    }
+
+    async function removeWorkFromTag(tag, workId) {
+        const normalizedTag = normalizeTag(tag);
+        const tagLookup = await getTagLookup();
+        if (tagLookup[normalizedTag]) {
+            delete tagLookup[normalizedTag][workId];
+            if (Object.keys(tagLookup[normalizedTag]).length === 0) {
+                delete tagLookup[normalizedTag];
+            }
+            await saveTagLookup(tagLookup);
+        }
+    }
+
+    // Get work info from page
+function getWorkInfo() {
+    const workId = window.location.pathname.match(/\/works\/(\d+)/)?.[1];
+    if (!workId || !isValidWorkId(workId)) return null;
+
+    const title = document.querySelector('.title.heading')?.textContent.trim() || '';
+    const author = document.querySelector('.byline.heading a[rel="author"]')?.textContent.trim() || '';
+    const summary = document.querySelector('.summary blockquote')?.textContent.trim() || '';
+
+    return { id: workId, title, author, summary };
+}
+
+    // Create tag manager UI
+function createTagManager(workInfo) {
+    const container = document.createElement('div');
+    container.classList.add('personal-tags-container');
+    // Apply the same width styling as the notes containers
+    container.style.cssText = `
+        margin: 15px 0;
+        padding: 10px;
+        border: 1.5px solid #999;
+        border-radius: 5px;
+        position: relative;
+        max-width: 580px;
+        margin-left: auto;
+        margin-right: auto;
+    `;
+
+    // Header
+    const header = document.createElement('div');
+    header.style.cssText = 'font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #ccc; padding-bottom: 8px;';
+    header.textContent = '📌 Personal Tags';
+    container.appendChild(header);
+
+    // Tags display
+    const tagsDisplay = document.createElement('div');
+    tagsDisplay.style.cssText = 'margin: 10px 0;';
+    container.appendChild(tagsDisplay);
+
+    // Input container
+    const inputContainer = document.createElement('div');
+    inputContainer.style.cssText = 'display: flex; gap: 5px; margin-top: 10px;';
+    container.appendChild(inputContainer);
+
+    // Tag input
+    const tagInput = document.createElement('input');
+    tagInput.type = 'text';
+    tagInput.placeholder = 'Add tag...';
+    tagInput.style.cssText = 'flex: 1; padding: 5px; border: 1px solid #ccc; border-radius: 3px;';
+    inputContainer.appendChild(tagInput);
+
+    // Add button
+    const addButton = document.createElement('button');
+    addButton.textContent = 'Add Tag';
+    addButton.style.cssText = `
+        padding: 5px 10px;
+        border: none;
+        border-radius: 3px;
+        cursor: pointer;
+    `;
+    inputContainer.appendChild(addButton);
+
+    // Suggestion box
+    const suggestionBox = document.createElement('div');
+    suggestionBox.style.cssText = `
+        position: absolute;
+        top: 100%;
+        left: 0;
+        width: 100%;
+        background: #2A273F;
+        border: 1px solid #999;
+        border-radius: 3px;
+        max-height: 150px;
+        overflow-y: auto;
+        z-index: 1000;
+        display: none;
+    `;
+    container.appendChild(suggestionBox);
+
+    // Helper: get all used tags
+    async function getAllUsedTags() {
+        const allTags = await Storage.load(KEYS.PERSONAL_TAGS, {});
+        const tagsSet = new Set();
+        Object.values(allTags).forEach(workTags => workTags.forEach(tag => tagsSet.add(tag)));
+        return Array.from(tagsSet).sort();
+    }
+
+    // Display existing tags
+    async function updateTagsDisplay() {
+        const tags = await getPersonalTags(workInfo.id);
+        if (!tags.length) {
+            tagsDisplay.innerHTML = '<em style="color: #999;">No personal tags yet</em>';
+            return;
+        }
+
+        tagsDisplay.innerHTML = tags.map(tag => `
+            <span style="
+                display: inline-block;
+                margin: 2px;
+                padding: 3px 8px;
+                border: 1px solid #999;
+                border-radius: 3px;
+                font-size: 0.9em;
+                background-color: #2A273F;
+            ">
+                ${tag}
+                <button data-tag="${tag}" style="
+                    margin-left: 5px;
+                    background: none;
+                    border: none;
+                    cursor: pointer;
+                    font-weight: bold;
+                ">×</button>
+            </span>
+        `).join('');
+
+        // Add delete functionality
+        tagsDisplay.querySelectorAll('button').forEach(btn => {
+            btn.onclick = async () => {
+                const tagToDelete = btn.dataset.tag;
+                const currentTags = await getPersonalTags(workInfo.id);
+                const newTags = currentTags.filter(t => t !== tagToDelete);
+                await savePersonalTags(workInfo.id, newTags);
+                await removeWorkFromTag(tagToDelete, workInfo.id);
+                await updateTagsDisplay();
+            };
+        });
+    }
+
+    // Add tag
+    addButton.onclick = async () => {
+        const newTag = tagInput.value.trim();
+        if (!newTag) return;
+
+        const currentTags = await getPersonalTags(workInfo.id);
+        if (!currentTags.includes(newTag)) {
+            currentTags.push(newTag);
+            await savePersonalTags(workInfo.id, currentTags);
+            await addWorkToTag(newTag, workInfo);
+        }
+
+        tagInput.value = '';
+        await updateTagsDisplay();
+    };
+
+    tagInput.onkeypress = e => {
+        if (e.key === 'Enter') addButton.click();
+    };
+
+// Autocomplete suggestions with keyboard navigation
+let selectedIndex = -1; // Track which suggestion is selected
+
+tagInput.addEventListener('input', async () => {
+    const query = tagInput.value.toLowerCase();
+    const usedTags = (await getAllUsedTags()).filter(t => t.toLowerCase().startsWith(query) && t.toLowerCase() !== query);
+    selectedIndex = -1; // Reset selection when typing
+
+    if (query && usedTags.length) {
+        suggestionBox.innerHTML = '';
+        usedTags.forEach((tag, index) => {
+            const item = document.createElement('div');
+            item.textContent = tag;
+            item.className = 'suggestion-item';
+            item.dataset.index = index;
+            item.style.cssText = 'padding: 5px 10px; cursor: pointer;';
+
+            item.onmouseover = () => {
+    // Clear previous selection
+    suggestionBox.querySelectorAll('.suggestion-item').forEach(el => {
+        el.style.background = '#2A273F';
+    });
+    // Highlight hovered item
+    item.style.background = '#46446C';
+    selectedIndex = index;
+};
+
+item.onmouseleave = () => {
+    // Always deselect when mouse leaves any item
+    item.style.background = '#2A273F';
+    selectedIndex = -1;
+};
+
+            item.onclick = async () => {
+                // Add the tag directly instead of just populating the input
+                const currentTags = await getPersonalTags(workInfo.id);
+                if (!currentTags.includes(tag)) {
+                    currentTags.push(tag);
+                    await savePersonalTags(workInfo.id, currentTags);
+                    await addWorkToTag(tag, workInfo);
+                    await updateTagsDisplay();
+                }
+
+                // Clear input and hide suggestions
+                tagInput.value = '';
+                suggestionBox.style.display = 'none';
+                selectedIndex = -1;
+                tagInput.focus();
+            };
+            suggestionBox.appendChild(item);
+        });
+        suggestionBox.style.display = 'block';
+    } else {
+        suggestionBox.style.display = 'none';
+        selectedIndex = -1;
+    }
+});
+
+// Add keyboard navigation
+tagInput.addEventListener('keydown', (e) => {
+    const suggestions = suggestionBox.querySelectorAll('.suggestion-item');
+
+    if (suggestions.length === 0) return;
+
+    switch(e.key) {
+        case 'ArrowDown':
+            e.preventDefault();
+            selectedIndex = Math.min(selectedIndex + 1, suggestions.length - 1);
+            updateSelection(suggestions);
+            break;
+
+        case 'ArrowUp':
+            e.preventDefault();
+            selectedIndex = Math.max(selectedIndex - 1, -1);
+            updateSelection(suggestions);
+            break;
+
+        case 'Enter':
+            e.preventDefault();
+            if (selectedIndex >= 0 && suggestions[selectedIndex]) {
+                // Click the selected suggestion
+                suggestions[selectedIndex].click();
+            } else {
+                // No suggestion selected, use the add button logic
+                addButton.click();
+            }
+            break;
+
+        case 'Escape':
+            suggestionBox.style.display = 'none';
+            selectedIndex = -1;
+            break;
+    }
+});
+
+function updateSelection(suggestions) {
+    suggestions.forEach((item, index) => {
+        if (index === selectedIndex) {
+            item.style.background = '#46446C';
+        } else {
+            item.style.background = '#2A273F';
+        }
+    });
+}
+
+tagInput.addEventListener('blur', () => {
+    setTimeout(() => {
+        suggestionBox.style.display = 'none';
+        selectedIndex = -1;
+    }, 100);
+});
+
+    updateTagsDisplay();
+
+    return container;
+}
+
+    // Add personal tags to work page
+async function addTagsToWorkPage() {
+    const workInfo = getWorkInfo();
+    if (!workInfo) return;
+
+    const workMeta = document.querySelector('.work.meta') || document.querySelector('dl.work.meta.group');
+    if (!workMeta) return;
+
+    const tagManager = createTagManager(workInfo);
+
+    // Remove the manual width setting since we're using the same approach as the notes
+    // The max-width: 600px and auto margins will handle the width consistently
+
+    workMeta.parentElement.insertBefore(tagManager, workMeta.nextSibling);
+}
+
+    // Add personal works to tag listing pages
+async function addPersonalWorksToTagPage() {
+    try {
+        const currentTag = decodeURIComponent(window.location.pathname.match(/\/tags\/([^\/]+)/)?.[1] || '');
+        if (!currentTag) return;
+
+        const tagLookup = await getTagLookup();
+
+        // Normalize the current tag for lookup
+        const normalizedCurrentTag = normalizeTag(currentTag.replace(/%20/g, ' ').replace(/_/g, ' '));
+        console.log('Normalized current tag:', normalizedCurrentTag);
+
+        // Look up using normalized tag
+        const personalWorks = tagLookup[normalizedCurrentTag];
+
+        if (!personalWorks || Object.keys(personalWorks).length === 0) {
+            console.log('No personal works found for tag:', normalizedCurrentTag);
+            return;
+        }
+
+        console.log('Found personal works:', personalWorks);
+
+        // Wait a bit for page to fully load, then find the works list
+        setTimeout(() => {
+            const worksList = document.querySelector('ol.work.index.group') ||
+                             document.querySelector('#main ol.index.group') ||
+                             document.querySelector('#main .index.group') ||
+                             document.querySelector('ol.work.index');
+
+            if (!worksList) {
+                console.log('Could not find works list element');
+                return;
+            }
+
+            console.log('Found works list:', worksList);
+
+            // Check if we already added the section
+            if (document.querySelector('#personal-tags-section')) {
+                console.log('Personal section already exists');
+                return;
+            }
+
+// Create personal works section
+const personalSection = document.createElement('div');
+personalSection.id = 'personal-tags-section';
+personalSection.style.cssText = `
+    margin: 15px 0;
+    padding: 5px;
+    border: 1px solid;
+    border-radius: 5px;
+    overflow: hidden;
+`;
+
+const sectionHeader = document.createElement('h4');
+sectionHeader.style.cssText = `
+    margin: 0;
+    padding: 10px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+`;
+
+// Create header text and toggle indicator
+const headerText = document.createElement('span');
+headerText.textContent = `📌 Your Personal "${capitalizeTag(currentTag.replace(/%20/g, ' ').replace(/_/g, ' '))}" Tags`;
+
+const toggleIndicator = document.createElement('span');
+toggleIndicator.textContent = '▼';
+toggleIndicator.style.cssText = `
+    font-size: 0.8em;
+    transition: transform 0.2s;
+    transform: rotate(-90deg);
+`;
+
+sectionHeader.appendChild(headerText);
+sectionHeader.appendChild(toggleIndicator);
+
+// Create collapsible content container
+const contentContainer = document.createElement('div');
+contentContainer.style.cssText = `
+    padding: 0 10px;
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease, padding 0.3s ease;
+`;
+
+personalSection.appendChild(sectionHeader);
+personalSection.appendChild(contentContainer);
+
+// Add each personal work to the content container
+Object.entries(personalWorks).forEach(([workId, info]) => {
+    const workItem = document.createElement('div');
+    workItem.style.cssText = `
+        margin: 10px 0;
+        padding: 8px;
+        border-left: 3px solid;
+    `;
+
+    workItem.innerHTML = `
+        <h4 style="margin: 0 0 5px 0;">
+            <a href="/works/${workId}">${info.title}</a>
+        </h4>
+        <p style="margin: 0; color: #999; font-size: 0.9em;">
+            by ${info.author}
+        </p>
+        ${info.summary ? `<p style="margin: 5px 0 0 0; font-size: 0.85em;">${info.summary}</p>` : ''}
+    `;
+    contentContainer.appendChild(workItem);
+});
+
+// Add click handler for toggle functionality
+let isExpanded = false;
+sectionHeader.addEventListener('click', () => {
+    if (isExpanded) {
+        // Collapse
+        contentContainer.style.maxHeight = '0';
+        contentContainer.style.padding = '0 15px';
+        toggleIndicator.style.transform = 'rotate(-90deg)';
+        isExpanded = false;
+    } else {
+        // Expand
+        contentContainer.style.maxHeight = contentContainer.scrollHeight + 'px';
+        contentContainer.style.padding = '15px';
+        toggleIndicator.style.transform = 'rotate(0deg)';
+        isExpanded = true;
+    }
+});
+
+            // Insert before the regular works list
+            worksList.parentElement.insertBefore(personalSection, worksList);
+            console.log('Personal section added successfully');
+        }, 500);
+    } catch (error) {
+        console.log('Error adding personal works to tag page:', error);
+    }
+}
+
+// Show personal tags modal
+async function showPersonalTagsModal() {
+    const allTags = await Storage.load(KEYS.PERSONAL_TAGS, {});
+    const tagsSet = new Set();
+    Object.values(allTags).forEach(workTags => workTags.forEach(tag => tagsSet.add(tag)));
+    const sortedTags = Array.from(tagsSet).sort();
+
+    if (sortedTags.length === 0) {
+        alert('No personal tags found.');
+        return;
+    }
+
+    // Remove existing modal if present
+    const existingModal = document.querySelector('#personal-tags-modal');
+    if (existingModal) existingModal.remove();
+
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.id = 'personal-tags-modal';
+    overlay.style.cssText = `
+        position: fixed;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+    `;
+
+    // Clicking on the overlay closes the modal
+    overlay.addEventListener('click', () => overlay.remove());
+
+    // Modal container
+    const modal = document.createElement('div');
+    modal.style.cssText = `
+        background: #232136CC;
+        color: #FFF;
+        padding: 20px;
+        border: 1.5px solid #999;
+        border-radius: 6px;
+        max-width: 600px;
+        width: 90%;
+        max-height: 80%;
+        overflow-y: auto;
+        box-shadow: 0 0 10px rgba(0,0,0,0.5);
+        position: relative;
+        font-family: sans-serif;
+    `;
+
+    // Prevent clicks inside the modal from closing it
+    modal.addEventListener('click', (e) => e.stopPropagation());
+
+    overlay.appendChild(modal);
+
+    // Header
+    const header = document.createElement('div');
+    header.style.cssText = `
+        font-weight: bold;
+        font-size: 1.2em;
+        margin-bottom: 15px;
+        border-bottom: 1px solid #555;
+        padding-bottom: 8px;
+    `;
+    header.textContent = '📌 Your Personal Tags';
+    modal.appendChild(header);
+
+// Content list of tags
+const content = document.createElement('div');
+content.style.cssText = 'display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;';
+sortedTags.forEach(tag => {
+    const tagEl = document.createElement('a'); // Changed from 'span' to 'a'
+    tagEl.textContent = tag;
+    tagEl.href = `https://archiveofourown.org/tags/${encodeURIComponent(tag)}/works`; // Add the link
+    tagEl.target = '_blank'; // Open in new tab
+    tagEl.style.cssText = `
+        padding: 4px 10px;
+        background: #44415a40;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.95em;
+        text-decoration: none;
+        color: inherit;
+        display: inline-block;
+        transition: background-color 0.2s;
+    `;
+
+    // Add hover effect
+    tagEl.addEventListener('mouseenter', () => {
+        tagEl.style.backgroundColor = '#232136CC';
+    });
+
+    tagEl.addEventListener('mouseleave', () => {
+        tagEl.style.backgroundColor = '#44415a40';
+    });
+
+    content.appendChild(tagEl);
+});
+modal.appendChild(content);
+
+    // Add modal to body
+    document.body.appendChild(overlay);
+}
+
+
+// Add navigation button
+function addPersonalTagsButton() {
+    console.log('addPersonalTagsButton called'); // Debug line
+
+    const nav = document.querySelector("ul.primary.navigation.actions") ||
+               document.querySelector("ul.primary.navigation") ||
+               document.querySelector("nav ul");
+
+    console.log('Navigation element found:', nav); // Debug line
+
+    if (!nav) {
+        console.log('No navigation element found!');
+        return;
+    }
+
+    if (document.querySelector("#personal-tags-btn")) {
+        console.log('Personal tags button already exists');
+        return;
+    }
+
+    // Add Personal Tags button
+    const personalTagsLi = document.createElement("li");
+    personalTagsLi.innerHTML = '<a href="#" id="personal-tags-btn">Personal Tags</a>';
+    nav.appendChild(personalTagsLi);
+
+    console.log('Personal Tags button added to:', nav); // Debug line
+
+    personalTagsLi.querySelector("a").addEventListener("click", async (e) => {
+        e.preventDefault();
+        await showPersonalTagsModal();
+    });
+}
+
+    // Initialize based on page type
+async function init() {
+    // Initialize IndexedDB
+    await Storage.initDB();
+
+    const path = window.location.pathname;
+
+    if (path.match(/\/works\/\d+/)) {
+        await addTagsToWorkPage();
+    } else if (path.match(/\/tags\/[^\/]+\/works/)) {
+        await addPersonalWorksToTagPage();
+    }
+
+    // Add navigation button
+    addPersonalTagsButton();
+}
+
+    // Wait for page to load
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
+
+})();

@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         AO3 Tagging and Notes
-// @version      1.1.1
+// @version      8.3.5-indexeddb
 // @description  Tag AO3 works with Google sync for cross-device data
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
-// @updateURL    https://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Tagging%20and%20Notes
-// @downloadURL  https://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Tagging%20and%20Notes
+// @updateURL    https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Tagging%20and%20Notes
+// @downloadURL  https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Tagging%20and%20Notes
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 
@@ -116,19 +116,13 @@ const TAG_COLORS = Object.fromEntries(
                     return fallback;
                 }
             }
-            // If not in cache, this is the first time this key is accessed.
-            // Just return the fallback value. DO NOT save it back to the database.
-            // This prevents a race condition where an early read wipes out the DB
-            // before the cache is populated.
+
             return fallback;
         }
 
-        // This method is SYNCHRONOUS for the caller, but performs an ASYNC write to the DB.
         save(key, value) {
-            // 1. Update the in-memory cache synchronously for immediate access
             this.cache[key] = value;
 
-            // 2. Write to IndexedDB asynchronously (fire and forget)
             if (!this.db) {
                 console.error("Database not initialized, cannot save.");
                 return;
@@ -143,7 +137,6 @@ const TAG_COLORS = Object.fromEntries(
             };
         }
 
-        // Keep the specific methods for a seamless, drop-in replacement of the old class
         loadLabels() { return this.load(KEYS.LABELS); }
         saveLabels(v) { this.save(KEYS.LABELS, v); }
         loadNotes() { return this.load(KEYS.NOTES); }
@@ -160,11 +153,8 @@ const TAG_COLORS = Object.fromEntries(
         saveDeletedNotes(v) { this.save(KEYS.DELETED_NOTES, v); }
     }
 
-    // Create a single instance to be used throughout the script
-    const Storage = new IndexedDBStorage('AO3TaggingNotesDB', 'data');
-    // --- END REPLACEMENT ---
+    const Storage = new IndexedDBStorage('AO3DB', 'data');
 
-    // UI Utilities - Consolidated
     const UI = {
         formatDateTime: (d) => d.toLocaleString('en-US', {
             year: "numeric", month: "short", day: "numeric",
@@ -259,7 +249,6 @@ function injectGlobalStyles() {
     `;
     document.head.appendChild(style);
 }
-    // Event Delegation Manager for Tag Browser Modal
     class TagBrowserEventManager {
         constructor(modal) {
             this.modal = modal;
@@ -280,26 +269,22 @@ function injectGlobalStyles() {
         handleContentClick(e) {
             const target = e.target;
 
-            // Delete tag button
             if (target.matches(".delete-tag-btn")) {
                 e.stopPropagation();
                 this.handleDeleteTag(target);
             }
 
-            // Delete author note button
             else if (target.matches(".delete-author-note-btn")) {
                 e.stopPropagation();
                 this.handleDeleteAuthorNote(target);
             }
 
-// Refresh fic button
 else if (target.matches(".refresh-fic-btn") || target.closest(".refresh-fic-btn")) {
     e.stopPropagation();
     const button = target.closest(".refresh-fic-btn") || target;
     this.handleRefreshFic(button);
 }
 
-          // Download tag button - handle FIRST before tag item click
 if (target.matches(".download-tag-btn") || target.closest(".download-tag-btn")) {
     e.preventDefault();
     e.stopPropagation();
@@ -307,9 +292,8 @@ if (target.matches(".download-tag-btn") || target.closest(".download-tag-btn")) 
     const button = target.closest(".download-tag-btn") || target;
     const tag = button.dataset.tag;
     this.handleDownloadTag(tag);
-    return; // Exit early to prevent further processing
+    return;
 }
-            // Tag item clicks
             else if (target.closest(".tag-item")) {
                 e.stopPropagation();
                 const tagItem = target.closest(".tag-item");
@@ -317,20 +301,17 @@ if (target.matches(".download-tag-btn") || target.closest(".download-tag-btn")) 
                 if (tag) this.handleTagClick(tag);
             }
 
-            // Author notes item clicks
             else if (target.closest(".author-notes-item")) {
                 e.stopPropagation();
                 this.handleAuthorNotesClick();
             }
 
-            // Back to tags button
             else if (target.matches("#back-to-tags")) {
                 e.preventDefault();
                 e.stopPropagation();
                 this.handleBackToTags();
             }
 
-            // Sort buttons
             else if (target.matches("#sort-work-id")) {
                 this.handleSortWorkId();
             }
@@ -344,12 +325,10 @@ if (target.matches(".download-tag-btn") || target.closest(".download-tag-btn")) 
                 this.handleSortAuthorName();
             }
 
-            // Refresh metadata button
             else if (target.matches("#refresh-metadata")) {
                 this.handleRefreshMetadata(target);
             }
 
-            // Fic item container clicks (for selection modal)
             else if (target.closest(".fic-item")) {
                 const ficItem = target.closest(".fic-item");
                 const checkbox = ficItem.querySelector('.work-checkbox');
@@ -364,18 +343,15 @@ if (target.matches(".download-tag-btn") || target.closest(".download-tag-btn")) 
         handleMouseEnter(e) {
             const target = e.target;
 
-            // Delete button hover
             if (target.matches(".delete-tag-btn") || target.matches(".delete-author-note-btn")) {
                 target.style.background = "#d32f2f";
                 target.style.transform = "scale(1.1)";
             }
 
-            // Refresh button hover
             else if (target.matches(".refresh-fic-btn")) {
                 target.style.transform = "scale(1.2)";
             }
 
-            // Tag item hover
             else if (target.closest(".tag-item")) {
                 const tagItem = target.closest(".tag-item");
                 const tag = tagItem.dataset.tag;
@@ -385,7 +361,6 @@ if (target.matches(".download-tag-btn") || target.closest(".download-tag-btn")) 
                 tagItem.style.boxShadow = `0 0 12px 3px ${color.bg}77`;
             }
 
-            // Author notes item hover
             else if (target.closest(".author-notes-item")) {
                 const item = target.closest(".author-notes-item");
                 item.style.background = "#232136CC";
@@ -397,18 +372,15 @@ if (target.matches(".download-tag-btn") || target.closest(".download-tag-btn")) 
         handleMouseLeave(e) {
             const target = e.target;
 
-            // Delete button hover
             if (target.matches(".delete-tag-btn") || target.matches(".delete-author-note-btn")) {
                 target.style.background = "#f44336";
                 target.style.transform = "scale(1)";
             }
 
-            // Refresh button hover
             else if (target.matches(".refresh-fic-btn")) {
                 target.style.transform = "scale(1)";
             }
 
-            // Tag item hover
             else if (target.closest(".tag-item")) {
                 const tagItem = target.closest(".tag-item");
                 const tag = tagItem.dataset.tag;
@@ -418,7 +390,6 @@ if (target.matches(".download-tag-btn") || target.closest(".download-tag-btn")) 
                 tagItem.style.boxShadow = `0 0 8px 2px ${color.bg}55`;
             }
 
-            // Author notes item hover
             else if (target.closest(".author-notes-item")) {
                 const item = target.closest(".author-notes-item");
                 item.style.background = "#44415a40";
@@ -491,24 +462,19 @@ async handleRefreshFic(button) {
     button.disabled = true;
 
     try {
-        // Clear the cached entry first
         const cache = Storage.loadMetadataCache();
         delete cache[workId];
         Storage.saveMetadataCache(cache);
 
-        // Force refresh this specific work
         const newMetadata = await MetadataCache.fetchWorkMetadata(workId, false);
 
-        // Find the work item and update the author display
         const workItem = button.closest('.work-item');
         const authorLink = workItem.querySelector('a');
 
-        // Completely rebuild the link content
         authorLink.innerHTML = `<strong>${newMetadata.title}</strong> by ${newMetadata.author}`;
 
         console.log("Updated to:", newMetadata.title, "by", newMetadata.author);
 
-        // Reset button after successful refresh
         setTimeout(() => {
             button.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
@@ -606,7 +572,6 @@ async handleRefreshFic(button) {
             button.disabled = false;
         }
 
-        // Helper methods for data management
         sortWorkData(sortType) {
             if (sortType === 'title') {
                 this.workData.sort((a, b) => a.metadata.title.localeCompare(b.metadata.title));
@@ -635,7 +600,6 @@ async handleRefreshFic(button) {
             if (sortType === 'name') {
                 this.authorsData.sort((a, b) => a.authorId.localeCompare(b.authorId));
             } else {
-                // Sort by date (most recent first)
                 this.authorsData.sort((a, b) => {
                     const aDate = Date.parse(a.note.date) || 0;
                     const bDate = Date.parse(b.note.date) || 0;
@@ -649,7 +613,6 @@ async handleRefreshFic(button) {
             const sortTitleBtn = this.content.querySelector("#sort-title");
             const color = TAG_COLORS[this.currentTag] || { bg: "#6e6a86", text: "#fff" };
 
-            // Reset all buttons
             [sortWorkIDBtn, sortTitleBtn].forEach(btn => {
                 if (btn) {
                     btn.style.background = '#555';
@@ -658,7 +621,6 @@ async handleRefreshFic(button) {
                 }
             });
 
-            // Highlight active button
             let activeBtn = this.currentSort === 'work-id' ? sortWorkIDBtn : sortTitleBtn;
             if (activeBtn) {
                 activeBtn.style.background = color.bg;
@@ -671,7 +633,6 @@ async handleRefreshFic(button) {
             const dateBtn = this.content.querySelector('#sort-author-date');
             const nameBtn = this.content.querySelector('#sort-author-name');
 
-            // Reset buttons
             [dateBtn, nameBtn].forEach(btn => {
                 if (btn) {
                     btn.style.background = '#555';
@@ -680,7 +641,6 @@ async handleRefreshFic(button) {
                 }
             });
 
-            // Highlight active
             const activeBtn = this.currentSort === 'author-date' ? dateBtn : nameBtn;
             if (activeBtn) {
                 activeBtn.style.background = '#e59888';
@@ -794,14 +754,12 @@ updateWorksDisplay() {
 
                 const color = TAG_COLORS[tag] || { bg: "#6e6a86", text: "#fff" };
 
-// Fetch metadata
 this.workData = await Promise.all(
     works.map(async (ficId) => {
         try {
             const workId = normalizeWorkId(ficId);
             const metadata = await MetadataCache.fetchWorkMetadata(workId);
 
-            // Only fetch summary if this is the "To Read" tag
             let summary = '';
             if (tag === "To Read") {
                 summary = await fetchWorkSummary(workId);
@@ -827,10 +785,8 @@ this.workData = await Promise.all(
     })
 );
 
-                // Sort by Work ID by default
                 this.sortWorkData('work-id');
 
-                // Render the works view
                 this.content.innerHTML = `
                     <div style="margin-bottom:20px;">
                         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
@@ -876,7 +832,6 @@ this.workData = await Promise.all(
             const authorNotes = Storage.loadAuthorNotes();
             this.authorsData = Object.entries(authorNotes).map(([authorId, note]) => ({ authorId, note }));
 
-            // Sort by date initially
             this.sortAuthorData('date');
 
             this.content.innerHTML = `
@@ -960,7 +915,6 @@ this.workData = await Promise.all(
         }
     }
 
-    // Event Delegation Manager for Download Selection Modal
     class DownloadSelectionEventManager {
         constructor(modal) {
             this.modal = modal;
@@ -975,12 +929,10 @@ this.workData = await Promise.all(
         handleModalClick(e) {
             const target = e.target;
 
-            // Prevent modal close when clicking inside works container
             if (target.closest('#works-container')) {
                 e.stopPropagation();
             }
 
-            // Fic item clicks for selection
             if (target.closest('.fic-item')) {
                 const ficItem = target.closest('.fic-item');
                 const checkbox = ficItem.querySelector('.work-checkbox');
@@ -991,7 +943,6 @@ this.workData = await Promise.all(
                 }
             }
 
-            // Selection buttons
             else if (target.matches('#select-all')) {
                 this.selectAll();
             }
@@ -1002,7 +953,6 @@ this.workData = await Promise.all(
                 this.selectNew();
             }
 
-            // Action buttons
             else if (target.matches('#download-selected')) {
                 this.downloadSelected();
             }
@@ -1065,7 +1015,6 @@ selectNew() {
         if (ficItems[index]) {
             ficItems[index].classList.toggle('selected', isNew);
 
-            // Update the status text in the UI
             const statusSpan = ficItems[index].querySelector('span[style*="color"]');
             if (statusSpan) {
                 if (isNew) {
@@ -1087,7 +1036,6 @@ selectNew() {
                 .filter(cb => cb.checked)
                 .map(cb => cb.dataset.ficId);
 
-            // Trigger the download with selected works
             if (this.onDownloadSelected) {
                 this.onDownloadSelected(selected);
             }
@@ -1100,7 +1048,6 @@ selectNew() {
         }
 
         destroy() {
-            // Clean up event listeners if needed
         }
 
       refreshDownloadStatus() {
@@ -1129,7 +1076,6 @@ selectNew() {
 
     }
 
-    // Event Delegation Manager for Work Items (on listing pages)
     class WorkItemEventManager {
         constructor() {
             this.setupEventDelegation();
@@ -1145,7 +1091,6 @@ selectNew() {
 handleWorkClick(e) {
     const target = e.target;
 
-    // Toggle collapsed works - only if not clicking on links/buttons
     if (target.closest('.work-collapsed, .work-expanded') &&
     !target.closest('a, button, .ao3-tag-btn')) {
     const work = target.closest('li.work.blurb, .work.blurb, li.bookmark.blurb');  // Add bookmark support
@@ -1157,7 +1102,6 @@ handleWorkClick(e) {
     }
 }
 
-    // Tag buttons on work items
     else if (target.matches('.ao3-tag-btn')) {
         e.stopPropagation();
         const workId = target.dataset.workId;
@@ -1213,16 +1157,13 @@ handleWorkClick(e) {
         }
 
 handleTagButtonClick(workId, tag, button) {
-    // Find the work element FIRST
     const work = button.closest('li.work.blurb, .work.blurb, li.bookmark.blurb');
 
-    // Then add the debug logging
     console.log('Tag clicked, work element:', work);
     console.log('Work classes:', work.className);
 
     toggleWorkTag(workId, tag);
 
-    // Find the work element and refresh its tagging
     if (work) {
         this.refreshWorkTagging(work, workId);
     }
@@ -1274,17 +1215,13 @@ handleTagButtonClick(workId, tag, button) {
         }
     }
 
-    // Metadata Cache Manager (using your clean version)
     class MetadataCache {
-// Replace the MetadataCache class methods with these versions:
 
 static get(workId) {
     const cache = Storage.loadMetadataCache();
     const cached = cache[workId];
 
-    // Always use cached data if it exists, regardless of timestamp
     if (cached) {
-        // Handle both old and new cache structures
         if (cached.data && cached.data.title && cached.data.author) {
             return cached.data;  // New structure with wrapper
         } else if (cached.title && cached.author) {
@@ -1308,20 +1245,17 @@ static set(workId, data) {
 }
 
 static async fetchWorkMetadata(workId, skipNetworkFetch = false) {
-    // ALWAYS check cache first and use it if available
     const cached = this.get(workId);
     if (cached && cached.title && cached.author) {
         console.log(`Using cached metadata for work ${workId}: ${cached.title}`);
         return cached;
     }
 
-    // Only fetch from network if explicitly requested AND cache is empty
     if (skipNetworkFetch) {
         console.log(`No cached data for work ${workId}, returning placeholder`);
         return this.createFallback(workId, 'needsRefresh');
     }
 
-    // If we get here, we have no cached data and need to fetch
     console.log(`No cached metadata found for work ${workId}, fetching from AO3...`);
 
     try {
@@ -1336,7 +1270,6 @@ static async fetchWorkMetadata(workId, skipNetworkFetch = false) {
         const metadata = this.parseWorkMetadata(html, workId);
         console.log(`Successfully fetched metadata for ${workId}:`, metadata);
 
-        // Cache the new data
         if (this.isValidMetadata(metadata, workId)) {
             this.set(workId, metadata);
         }
@@ -1349,7 +1282,6 @@ static async fetchWorkMetadata(workId, skipNetworkFetch = false) {
     }
 }
         static async fetchWorkPage(workId) {
-            // Add respectful delay
             await new Promise(resolve =>
                 setTimeout(resolve, Math.random() * 500 + 500)
             );
@@ -1436,7 +1368,6 @@ static async fetchWorkMetadata(workId, skipNetworkFetch = false) {
                 }
             }
 
-            // Try extracting from page title as fallback
             const pageTitle = doc.querySelector('title')?.textContent;
             if (pageTitle?.includes(' - ')) {
                 const parts = pageTitle.split(' - ');
@@ -1453,19 +1384,17 @@ static async fetchWorkMetadata(workId, skipNetworkFetch = false) {
         static extractAuthor(doc) {
             let author = null;
 
-            // Try multiple selectors for author
             const authorSelectors = [
-                'a[rel="author"]',     // Standard author link
-                '.preface .byline a[href*="/users/"]',  // Preface byline user link only
-                '.work .byline a[href*="/users/"]',     // Work byline user link only
-                '#workskin .byline a[href*="/users/"]'  // Workskin byline user link only
+                'a[rel="author"]',
+                '.preface .byline a[href*="/users/"]',
+                '.work .byline a[href*="/users/"]',
+                '#workskin .byline a[href*="/users/"]'
             ];
 
             for (const selector of authorSelectors) {
                 const authorEl = doc.querySelector(selector);
                 if (authorEl && authorEl.textContent.trim()) {
                     const authorText = authorEl.textContent.trim();
-                    // Skip if it's the "Hi, username!" greeting
                     if (!authorText.toLowerCase().startsWith('hi,') && !authorText.includes('Log In')) {
                         author = authorText;
                         console.log(`Found author with selector "${selector}": ${author}`);
@@ -1474,7 +1403,6 @@ static async fetchWorkMetadata(workId, skipNetworkFetch = false) {
                 }
             }
 
-            // Check for anonymous author if no author link found
             if (!author) {
                 const bylineText = doc.querySelector('.byline')?.textContent ||
                                   doc.querySelector('h3.byline')?.textContent ||
@@ -1586,7 +1514,6 @@ static async fetchWorkMetadata(workId, skipNetworkFetch = false) {
         }
     }
 
-  // Add this as a separate function for fetching summaries
 async function fetchWorkSummary(workId) {
     if (!workId || !/^\d+$/.test(workId)) {
         return Promise.resolve('');
@@ -1622,7 +1549,6 @@ async function fetchWorkSummary(workId) {
     });
 }
 
-    // Mass Download Manager (simplified with event delegation)
     class MassDownloadManager {
         constructor() {
             this.isDownloading = false;
@@ -1664,7 +1590,6 @@ async function fetchWorkSummary(workId) {
                     </div>
                 `);
 
-// Fetch metadata for all works
 const workData = await Promise.all(
     allIds.map(async (ficId) => {
         const workId = normalizeWorkId(ficId);
@@ -1678,10 +1603,8 @@ const tagHistory = downloadHistory[tag] || 0;
 
 loadingModal.remove();
 
-// Build works list HTML
 const worksList = workData.map(({ ficId, workId, metadata }) => {
-    // FIX: Check individual fic download history, not tag history
-    const isNew = !downloadHistory[ficId]; // Check if THIS specific fic was downloaded
+    const isNew = !downloadHistory[ficId];
 
     return `
 <div class="fic-item" style="display:flex;align-items:center;gap:10px;padding:8px;border-left:4px solid #666;border-radius:4px;margin:4px 0;background:#44415a40;cursor:pointer;">
@@ -1734,21 +1657,19 @@ const worksList = workData.map(({ ficId, workId, metadata }) => {
         const isNew = !downloadHistory[ficId];
 
         if (isNew) {
-            // Set checkbox as checked
             checkbox.checked = true;
 
-            // Add selected styling to the fic item
             if (ficItems[index]) {
                 ficItems[index].classList.add('selected');
             }
         }
     });
 
-    // Update the selected count display
+
     if (eventManager.updateSelectedCount) {
         eventManager.updateSelectedCount();
     }
-}, 0); // Small delay to ensure DOM is ready
+}, 0);
 
               eventManager.onDownloadSelected = (selected) => {
                     eventManager.destroy();
@@ -1761,7 +1682,6 @@ const worksList = workData.map(({ ficId, workId, metadata }) => {
                     resolve(null);
                 };
 
-                // Initialize selected count
                 eventManager.updateSelectedCount();
             });
         }
@@ -1849,7 +1769,6 @@ const worksList = workData.map(({ ficId, workId, metadata }) => {
 
             URL.revokeObjectURL(url);
 
-          // Track individual fic download
 const downloadHistory = Storage.loadDownloadHistory();
 downloadHistory[ficId] = Date.now();
 Storage.saveDownloadHistory(downloadHistory);
@@ -1881,10 +1800,8 @@ finalizeDownloads() {
     this.progressModal = null;
     this.isDownloading = false;
 
-    // If there's an active download selection modal, refresh its status
     const selectionModal = document.querySelector('#works-container');
     if (selectionModal) {
-        // Find the event manager instance and refresh status
         const modal = selectionModal.closest('[class*="backdrop"]');
         if (modal && modal._downloadEventManager) {
             modal._downloadEventManager.refreshDownloadStatus();
@@ -1906,7 +1823,6 @@ finalizeDownloads() {
         }
     }
 
-    // Note creation UI - now with event delegation support
     function createNoteUI(id, isAuthor = false) {
         const notes = isAuthor ? Storage.loadAuthorNotes() : Storage.loadNotes();
         const data = notes[id];
@@ -2035,7 +1951,6 @@ wrapper.saveNote = function() {
 
     const notes = isAuthor ? Storage.loadAuthorNotes() : Storage.loadNotes();
 
-    // Keep existing timestamp if note exists, create new one if it doesn't
     const timestamp = notes[id] && notes[id].date ? notes[id].date : UI.formatDateTime(new Date());
     notes[id] = { text, date: timestamp };
 
@@ -2080,7 +1995,6 @@ wrapper.deleteNote = function() {
         return wrapper;
     }
 
-    // Navigation buttons
     function addSettingsButton() {
         const nav = document.querySelector("ul.primary.navigation.actions") ||
                    document.querySelector("ul.primary.navigation") ||
@@ -2098,7 +2012,6 @@ wrapper.deleteNote = function() {
         });
     }
 
-    // Tag Browser Modal - now using event delegation
     function createTagBrowserModal() {
         if (document.getElementById("tag-browser-modal")) return;
 
@@ -2172,10 +2085,8 @@ wrapper.deleteNote = function() {
 
         document.body.appendChild(modal);
 
-        // Use event delegation instead of individual listeners
         const eventManager = new TagBrowserEventManager(modal);
 
-        // Close on backdrop click
         modal.addEventListener("click", e => {
             if (e.target.classList.contains('backdrop')) {
                 eventManager.destroy();
@@ -2183,11 +2094,9 @@ wrapper.deleteNote = function() {
             }
         });
 
-        // Store reference for cleanup
         modal._eventManager = eventManager;
     }
 
-    // Work processing functions
     function processWorksOnPage() {
             const workBlurbs = document.querySelectorAll('li.work.blurb, .work.blurb, li.bookmark.blurb');
         workBlurbs.forEach(work => {
@@ -2209,10 +2118,8 @@ function processStoryPage() {
     const workId = workMatch[1];
     console.log('Processing story page for work:', workId);
 
-    // Check if we already processed this page
     if (document.querySelector('.ao3-story-tagging')) return;
 
-    // Find where to insert the tagging UI
     const workMeta = document.querySelector('#workskin .preface') ||
                     document.querySelector('.work.meta.group') ||
                     document.querySelector('#main .wrapper');
@@ -2222,16 +2129,13 @@ function processStoryPage() {
         return;
     }
 
-    // Load current tag status FIRST
     const labels = Storage.loadLabels();
     const currentTag = labels[workId];
 
-    // Create the tagging container
     const tagContainer = document.createElement('div');
     tagContainer.className = 'ao3-story-tagging';
     tagContainer.style.cssText = `margin: 20px 0;`;
 
-    // Add current tag display if exists - THIS WAS MISSING PROPER REFRESH
     if (currentTag) {
         const tagDisplay = document.createElement('div');
         tagDisplay.id = 'current-tag-display'; // Add ID for easy updates
@@ -2243,7 +2147,6 @@ function processStoryPage() {
         tagContainer.appendChild(tagDisplay);
     }
 
-    // Add tag buttons
     const buttonContainer = document.createElement('div');
     buttonContainer.style.cssText = `
         display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 15px; justify-content: center;
@@ -2259,7 +2162,6 @@ function processStoryPage() {
             background: #eee; color: #333; font-size: 0.9em; cursor: pointer; transition: all 0.2s;
         `;
 
-        // Apply current tag styling IMMEDIATELY
         if (currentTag === tag) {
             btn.style.background = TAG_COLORS[tag].bg;
             btn.style.color = TAG_COLORS[tag].text;
@@ -2285,33 +2187,27 @@ btn.addEventListener('click', (e) => {
     e.preventDefault();
     e.stopPropagation();
 
-    // Immediate visual feedback before any storage operations
     const currentLabels = Storage.loadLabels();
     const wasTagged = currentLabels[workId] === tag;
 
     if (wasTagged) {
-        // If removing tag, reset to default immediately
         btn.style.background = '#eee';
         btn.style.color = '#333';
         btn.style.border = '1px solid #ccc';
         btn.style.fontWeight = 'normal';
     } else {
-        // If adding tag, apply tag colors immediately
         btn.style.background = TAG_COLORS[tag].bg;
         btn.style.color = TAG_COLORS[tag].text;
         btn.style.border = `1px solid ${TAG_COLORS[tag].bg}`;
     }
 
-    // Now do the actual storage operations
     toggleWorkTag(workId, tag);
 
-    // Get new state after toggle
     const newLabels = Storage.loadLabels();
     const newCurrentTag = newLabels[workId];
 
     console.log(`Tag toggle: ${tag}, was tagged: ${wasTagged}, new tag: ${newCurrentTag}`);
 
-    // Update UI for all buttons (this will correct any mistakes from immediate feedback)
     updateStoryPageTagging(workId, newCurrentTag);
 });
 
@@ -2320,26 +2216,21 @@ btn.addEventListener('click', (e) => {
 
     tagContainer.appendChild(buttonContainer);
 
-    // Add note UI
     const noteUI = createNoteUI(workId, false);
     tagContainer.appendChild(noteUI);
 
-    // Insert before work meta information
     workMeta.parentNode.insertBefore(tagContainer, workMeta);
 }
 
-// NEW HELPER FUNCTION for immediate UI updates
 function updateStoryPageTagging(workId, currentTag) {
     const tagDisplay = document.getElementById('current-tag-display');
     const buttons = document.querySelectorAll('.ao3-tag-btn[data-work-id="' + workId + '"]');
 
-    // Update tag display
     if (currentTag) {
         if (tagDisplay) {
             tagDisplay.textContent = `Currently tagged: ${currentTag}`;
             tagDisplay.style.color = TAG_COLORS[currentTag].bg;
         } else {
-            // Create new display if it didn't exist
             const container = document.querySelector('.ao3-story-tagging');
             const buttonContainer = container.querySelector('div[style*="display: flex"]');
 
@@ -2353,13 +2244,11 @@ function updateStoryPageTagging(workId, currentTag) {
             container.insertBefore(newDisplay, buttonContainer);
         }
     } else {
-        // Remove display if no tag
         if (tagDisplay) {
             tagDisplay.remove();
         }
     }
 
-    // Update all buttons
     buttons.forEach(btn => {
         const btnTag = btn.textContent;
         if (currentTag === btnTag) {
@@ -2426,14 +2315,12 @@ function updateStoryPageTagging(workId, currentTag) {
     }
 
 function processSubscriptionPage() {
-    // Find all author links in dt elements
     const authorLinks = document.querySelectorAll('dt a[href*="/users/"]');
 
     authorLinks.forEach(link => {
         if (link.dataset.processed) return;
         link.dataset.processed = 'true';
 
-        // Extract author name from the link
         const authorMatch = link.href.match(/\/users\/([^\/]+)/);
         if (authorMatch) {
             const authorId = authorMatch[1];
@@ -2451,7 +2338,6 @@ function addAuthorNoteToSubscription(authorLink, authorId) {
         noteSpan.style.cssText = 'margin-left: 8px; font-size: 0.9em; font-style: italic;';
         noteSpan.textContent = `(Author Note: ${note.text})`;
 
-        // Insert after the author link
         authorLink.parentNode.insertBefore(noteSpan, authorLink.nextSibling);
     }
 }
@@ -2464,7 +2350,6 @@ function addAuthorNoteToSubscription(authorLink, authorId) {
         if (match) return match[1];
     }
 
-    // For bookmark pages, extract from class name
     if (workElement.classList.contains('bookmark')) {
         const classMatch = workElement.className.match(/work-(\d+)/);
         if (classMatch) return classMatch[1];
@@ -2476,7 +2361,6 @@ function addAuthorNoteToSubscription(authorLink, authorId) {
         const labels = Storage.loadLabels();
         const currentTag = labels[workId];
 
-        // Remove existing containers
         const existingTags = work.querySelector('.ao3-tag-buttons');
         const existingNotes = work.querySelector('.ao3-note-container');
         const existingTitleTag = work.querySelector('.ao3-title-tag');
@@ -2484,7 +2368,6 @@ function addAuthorNoteToSubscription(authorLink, authorId) {
         if (existingNotes) existingNotes.remove();
         if (existingTitleTag) existingTitleTag.remove();
 
-        // Add tag label in front of story title if exists
         if (currentTag) {
             const titleTag = document.createElement('span');
             titleTag.className = 'ao3-title-tag';
@@ -2499,7 +2382,6 @@ function addAuthorNoteToSubscription(authorLink, authorId) {
             }
         }
 
-        // Create tag buttons container
         const tagContainer = document.createElement('div');
         tagContainer.className = 'ao3-tag-buttons';
 
@@ -2532,7 +2414,6 @@ function addAuthorNoteToSubscription(authorLink, authorId) {
             stats.parentNode.insertBefore(tagContainer, stats.nextSibling);
         }
 
-        // Create notes container
         const noteContainer = document.createElement('div');
         noteContainer.className = 'ao3-note-container';
         const noteUI = createNoteUI(workId, false);
@@ -2558,19 +2439,15 @@ function toggleWorkTag(workId, tag) {
     console.log(`Current tag before toggle: ${currentTag}`);
 
     if (currentTag === tag) {
-        // Remove tag if clicking the same tag
         delete labels[workId];
         console.log(`Removed tag ${tag} from work ${workId}`);
     } else {
-        // Set new tag (or replace existing different tag)
         labels[workId] = tag;
         console.log(`Set tag ${tag} for work ${workId}`);
     }
 
-    // Save immediately
     Storage.saveLabels(labels);
 
-    // Verify save worked
     const savedLabels = Storage.loadLabels();
     const newTag = savedLabels[workId];
     console.log(`Tag after save: ${newTag}`);
@@ -2582,37 +2459,31 @@ function applyWorkStyling(work, workId) {
     const labels = Storage.loadLabels();
     const currentTag = labels[workId];
 
-    // ALWAYS reset styling first, regardless of tag
     work.style.border = '';
     work.style.boxShadow = '';
     work.style.borderRadius = '';
     work.style.opacity = '1.0';
     work.classList.remove('work-collapsed', 'work-expanded');
 
-    // ALWAYS show all elements first (critical fix!)
     const elementsToShow = work.querySelectorAll(".tags,.summary,.stats,.fandoms,blockquote,.series,.collections");
     elementsToShow.forEach(el => {
         el.style.display = "";
         el.classList.remove('collapsible-content');
     });
 
-    // Remove ALL toggle functionality first
     const toggleElements = work.querySelectorAll('.work-toggle');
     toggleElements.forEach(el => {
         el.classList.remove('work-toggle');
         el.style.cursor = '';
     });
 
-    // Remove toggle from work itself
     work.classList.remove('work-toggle');
     work.style.cursor = '';
 
-    // If no tag, we're done - everything stays expanded
     if (!currentTag) {
         return;
     }
 
-    // Apply border highlighting for border tags
     if (BORDER_TAGS.includes(currentTag)) {
         const color = TAG_COLORS[currentTag]?.bg || "#000";
         work.style.border = `2px solid ${color}`;
@@ -2620,31 +2491,24 @@ function applyWorkStyling(work, workId) {
         work.style.borderRadius = "6px";
     }
 
-// ONLY apply collapsing if it's a collapse tag
 const shouldCollapse = COLLAPSE_TAGS.includes(currentTag);
 if (shouldCollapse) {
-    // Mark collapsible content - exclude bookmarker's section on bookmark pages
     let elementsToHide;
     if (work.classList.contains('bookmark')) {
-        // On bookmark pages, exclude the bookmarker's own notes section
         elementsToHide = work.querySelectorAll(".tags,.summary,.stats,.fandoms,blockquote:not(.own .notes),.series,.collections");
     } else {
-        // Regular work pages collapse everything as before
         elementsToHide = work.querySelectorAll(".tags,.summary,.stats,.fandoms,blockquote,.series,.collections");
     }
         elementsToHide.forEach(el => {
             el.classList.add('collapsible-content');
         });
 
-        // Make the whole work clickable for toggle
         work.classList.add('work-toggle');
         work.style.cursor = 'pointer';
 
-        // Set initial collapsed state
         work.classList.add('work-collapsed');
         work.style.opacity = "0.6";
 
-        // Store original display values if not already stored
         if (!work.dataset.originalDisplayStored) {
             elementsToHide.forEach(el => {
                 el.dataset.originalDisplay = el.style.display || getComputedStyle(el).display;
@@ -2652,20 +2516,16 @@ if (shouldCollapse) {
             work.dataset.originalDisplayStored = 'true';
         }
 
-        // Actually hide the elements
         elementsToHide.forEach(el => {
             el.style.display = "none";
         });
     }
-    // For non-collapse tags, everything stays expanded (already handled above)
 }
 
-// Add this function to handle the toggle click
 function toggleWorkCollapse(work) {
     const isCollapsed = work.classList.contains('work-collapsed');
 
     if (isCollapsed) {
-        // Expand
         work.classList.remove('work-collapsed');
         work.classList.add('work-expanded');
         work.style.opacity = "1.0";
@@ -2675,7 +2535,6 @@ function toggleWorkCollapse(work) {
             el.style.display = el.dataset.originalDisplay || "";
         });
     } else {
-        // Collapse
         work.classList.remove('work-expanded');
         work.classList.add('work-collapsed');
         work.style.opacity = "0.6";
@@ -2687,60 +2546,46 @@ function toggleWorkCollapse(work) {
     }
 }
 
-    // Initialize managers
     const downloadManager = new MassDownloadManager();
     let workItemManager = null;
 
-    // --- START SCRIPT INITIALIZATION REWORK ---
 
-    // This function contains all the original setup logic.
     function main() {
-        // Inject global styles once
         injectGlobalStyles();
 
-        // Add navigation buttons
         addSettingsButton();
 
-        // Initialize work item event delegation
         workItemManager = new WorkItemEventManager();
 
-        // Process work listing pages
         processWorksOnPage();
 
-        // Process individual story pages
         if (window.location.pathname.match(/\/works\/\d+/)) {
             processStoryPage();
         }
 
-        // Process author pages
         if (window.location.pathname.match(/\/users\/[^\/]+(?:\/pseuds\/[^\/]+)?\/?$/)) {
             processAuthorPage();
         }
-        // Process subscription page
         if (window.location.pathname.match(/\/users\/[^\/]+\/subscriptions/)) {
             processSubscriptionPage();
         }
     }
 
-    // This new async function handles the DB initialization before running the main script logic.
     async function initializeAndRun() {
         try {
-            await Storage.init(); // This initializes the DB and loads all data into the cache
-            main(); // Now, run the main script logic with all data available synchronously
+            await Storage.init();
+            main();
         } catch (error) {
             console.error("Failed to initialize AO3 Tagging and Notes script:", error);
-            // Notify the user that something went wrong.
             alert("Could not initialize the AO3 Tagging and Notes script due to a database error. Please check the console for details.");
         }
     }
 
-    // Run the new initialization procedure
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', initializeAndRun);
     } else {
         initializeAndRun();
     }
-    // --- END SCRIPT INITIALIZATION REWORK ---
 
 })();
 

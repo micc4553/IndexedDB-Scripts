@@ -1,0 +1,1272 @@
+let tagGroups = {};
+        Object.entries(labels).forEach(([ficId, tag]) => {
+            if (!tagGroups[tag]) tagGroups[tag] = [];
+            tagGroups[tag].push(ficId);
+        });
+
+        const tagOrder = ["Finished", "To Read", "Not Interested", "Dropped", "Disliked", "Favourite", "Dish"];
+        const sortedTags = tagOrder.filter(tag => tagGroups[tag]);
+
+        if (sortedTags.length === 0 && Object.keys(authorNotes).length === 0) {
+            UI.createModal(`
+                <div style="text-align:center;color:#d32f2f;">No tagged fics or author notes found.</div>
+            `);
+            return;
+        }
+
+        const tagsList = sortedTags.map(tag => {
+            const count = tagGroups[tag].length;
+            const color = TAG_COLORS[tag] || { bg: "#6e6a86", text: "#000" };
+
+            return `
+                <div class="tag-item" data-tag="${tag}"
+                     style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;margin:4px 0;
+                            border-radius:6px;background:#44415a40;border:2px solid ${color.bg};
+                            box-shadow:0 0 8px 2px ${color.bg}55;cursor:pointer;transition:all 0.2s;">
+                    <span style="font-weight:bold;">${tag}</span>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <span style="font-size:0.9em;">${count} work${count === 1 ? "" : "s"}</span>
+                        ${(tag === 'Favourite' || tag === 'Dish') ? `
+                            <button class="download-tag-btn" data-tag="${tag}"
+                                    style="background:${color.bg};color:white;border:none;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:0.8em;"
+                                    onclick="event.stopPropagation();">📚 Download</button>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        }).join("");
+
+        const authorNotesSection = Object.keys(authorNotes).length > 0 ? `
+            <div style="margin-top:20px;padding-top:20px;border-top:1px solid #555;">
+                <div class="author-notes-item" data-section="author-notes"
+                     style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;margin:4px 0;
+                            border-radius:6px;background:#44415a40;border:2px solid #cbb974;
+                            box-shadow:0 0 8px 2px #cbb97455;cursor:pointer;transition:all 0.2s;">
+                    <span style="font-weight:bold;">📝 Author Notes</span>
+                    <span style="font-size:0.9em;">${Object.keys(authorNotes).length} author${Object.keys(authorNotes).length === 1 ? "" : "s"}</span>
+                </div>
+            </div>
+        ` : '';
+
+        const modal = document.createElement("div");
+        modal.id = "tag-browser-modal";
+        modal.innerHTML = `
+            <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center;">
+                <div style="background:#232136CC;color:#fff;padding:0;border-radius:8px;width:90%;max-width:600px;height:80%;max-height:700px;display:flex;flex-direction:column;border:1px solid #ddd;">
+                    <div style="padding:20px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;align-items:center;">
+                        <h3 style="margin:0;color:#fff;">Browse Tagged Fics (${Object.keys(labels).length} total)</h3>
+                    </div>
+                    <div id="tag-browser-content" style="flex:1;overflow-y:auto;padding:20px;">
+                        ${tagsList}
+                        ${authorNotesSection}
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(modal);
+
+        modal.querySelectorAll(".tag-item").forEach(item => {
+            const tag = item.dataset.tag;
+            const color = TAG_COLORS[tag] || { bg: "#6e6a86", text: "#000" };
+
+            UI.addHoverEffect(item,
+                { background: "#232136CC", transform: "translateY(-1px)", boxShadow: `0 0 12px 3px ${color.bg}77` },
+                { background: "#44415a40", transform: "", boxShadow: `0 0 8px 2px ${color.bg}55` }
+            );
+
+            item.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                await showWorksForTag(tag, modal);
+            });
+        });
+
+        modal.querySelectorAll(".download-tag-btn").forEach(btn => {
+            btn.addEventListener("click", async () => {
+                const tag = btn.dataset.tag;
+                await downloadManager.downloadTaggedWorks(tag);
+            });
+        });
+
+        const authorNotesItem = modal.querySelector(".author-notes-item");
+        if (authorNotesItem) {
+            UI.addHoverEffect(authorNotesItem,
+                { background: "#232136CC", transform: "translateY(-1px)", boxShadow: "0 0 12px 3px #cbb97477" },
+                { background: "#44415a40", transform: "", boxShadow: "0 0 8px 2px #cbb97455" }
+            );
+            authorNotesItem.addEventListener("click", (e) => {
+                e.stopPropagation();
+                showAuthorNotes(modal);
+            });
+        }
+
+        modal.addEventListener("click", e => {
+            if (e.target === modal || e.target.style.background?.includes("rgba")) modal.remove();
+        });
+    }
+
+    // Show Works for Tag - Updated for IndexedDB
+    async function showWorksForTag(tag, modal) {
+        try {
+            const labels = await Storage.loadLabels();
+            const notes = await Storage.loadNotes();
+
+            const works = Object.keys(labels).filter(id => labels[id] === tag);
+
+            if (works.length === 0) {
+                const content = document.querySelector("#tag-browser-content");
+                content.innerHTML = `<div>No works found for tag "${tag}"</div>`;
+                return;
+            }
+
+            const content = document.querySelector("#tag-browser-content");
+            content.innerHTML = `<div>Loading works for ${tag}...</div>`;
+
+            const color = TAG_COLORS[tag] || { bg: "#6e6a86", text: "#000" };
+
+            const workData = await Promise.all(
+                works.map(async (ficId) => {
+                    const workId = ficId.replace("bookmark_", "").replace(/^.*?(\d+).*$/, "$1");
+                    const metadata = await MetadataCache.fetchWorkMetadata(workId);
+                    return { ficId, workId, metadata, note: notes[ficId] };
+                })
+            );
+
+            const worksList = workData.map(({ ficId, workId, metadata, note }) => {
+                return `
+                    <div class="work-item" data-fic-id="${ficId}"
+                         style="padding:12px 16px;margin:8px 0;border-radius:6px;background:#232136CC;
+                                border:1px solid #ddd;position:relative;">
+                        <div style="margin-bottom:8px;">
+                            <a href="https://archiveofourown.org/works/${workId}" target="_blank" style="color:#87ceeb;">
+                                ${metadata.title} by ${metadata.author}
+                            </a>
+                        </div>
+                        ${note ? `
+                            <div style="font-size:0.9em;margin-top:6px;padding:8px;background:#44415a40;border-radius:4px;">
+                                "${note.text}"
+                                ${note.date ? `<div style="font-size:0.8em;margin-top:4px;color:#999;">${note.date}</div>` : ""}
+                            </div>
+                        ` : ""}
+                        <button class="delete-tag-btn" data-fic-id="${ficId}" data-tag="${tag}"
+                                style="position:absolute;top:8px;right:8px;background:#f44336;color:white;
+                                       border:none;border-radius:4px;width:24px;height:24px;cursor:pointer;
+                                       font-size:12px;">×</button>
+                    </div>
+                `;
+            }).join("");
+
+            content.innerHTML = `
+                <div style="margin-bottom:20px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                        <button id="back-to-tags" style="background:none;border:1px solid #666;padding:6px 12px;border-radius:4px;cursor:pointer;color:#fff;">
+                            ← Back to Tags
+                        </button>
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <div style="padding:6px 12px;border-radius:4px;font-weight:bold;background:${color.bg};color:${color.text};">
+                                ${tag}
+                            </div>
+                            <span style="color:#ccc;">${works.length} work${works.length === 1 ? "" : "s"}</span>
+                        </div>
+                    </div>
+
+                    <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center;">
+                        <span style="color:#ccc;font-size:0.9em;">Sort by:</span>
+                        <button id="sort-date-tagged" style="background:#555;color:white;border:none;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:0.85em;">Tag Date</button>
+                        <button id="sort-date-updated" style="background:#555;color:white;border:none;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:0.85em;">Update Date</button>
+                        <button id="sort-title" style="background:#555;color:white;border:none;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:0.85em;">Title A-Z</button>
+                    </div>
+
+                </div>
+                <div id="works-list">${worksList}</div>
+            `;
+
+            // Sorting functionality
+            let currentSort = 'date-tagged';
+
+            async function getTagDate(ficId) {
+                const tagDates = await Storage.loadTagDates();
+                return tagDates[ficId] || Date.now();
+            }
+
+            function updateSortButtons(activeSort) {
+                const buttons = ['sort-title', 'sort-date-updated', 'sort-date-tagged'];
+                buttons.forEach(btnId => {
+                    const btn = content.querySelector(`#${btnId}`);
+                    if (btn) {
+                        if (btnId === `sort-${activeSort}`) {
+                            btn.style.background = color.bg;
+                            btn.style.color = color.text;
+                        } else {
+                            btn.style.background = '#555';
+                            btn.style.color = 'white';
+                        }
+                    }
+                });
+            }
+
+            async function sortAndDisplayWorks(sortType) {
+                currentSort = sortType;
+                updateSortButtons(sortType);
+
+                const worksList = document.getElementById('works-list');
+                worksList.innerHTML = '<div style="text-align:center;color:#ccc;padding:20px;">Sorting...</div>';
+
+                const worksWithDetails = await Promise.all(
+                    works.map(async (ficId) => {
+                        const workId = ficId.replace("bookmark_", "").replace(/^.*?(\d+).*$/, "$1");
+                        const metadata = await MetadataCache.fetchWorkMetadata(workId);
+                        const note = notes[ficId];
+
+                        let lastUpdated = 0;
+                        try {
+                            const response = await fetch(`https://archiveofourown.org/works/${workId}`);
+                            const text = await response.text();
+                            const parser = new DOMParser();
+                            const doc = parser.parseFromString(text, 'text/html');
+
+                            const updateEl = doc.querySelector("dd.updated");
+                            if (updateEl) {
+                                const dateText = updateEl.textContent.trim();
+                                const parsedDate = new Date(dateText);
+                                if (!isNaN(parsedDate.getTime())) {
+                                    lastUpdated = parsedDate.getTime();
+                                }
+                            }
+
+                            if (lastUpdated === 0) {
+                                const publishedEl = doc.querySelector("dd.published");
+                                if (publishedEl) {
+                                    const dateText = publishedEl.textContent.trim();
+                                    const parsedDate = new Date(dateText);
+                                    if (!isNaN(parsedDate.getTime())) {
+                                        lastUpdated = parsedDate.getTime();
+                                    }
+                                }
+                            }
+                        } catch (error) {
+                            lastUpdated = 0;
+                        }
+
+                        return {
+                            ficId,
+                            workId,
+                            title: metadata.title,
+                            author: metadata.author,
+                            note,
+                            dateAdded: await getTagDate(ficId),
+                            lastUpdated
+                        };
+                    })
+                );
+
+                switch (sortType) {
+                    case 'title':
+                        worksWithDetails.sort((a, b) => a.title.localeCompare(b.title));
+                        break;
+                    case 'date-updated':
+                        worksWithDetails.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
+                        break;
+                    case 'date-tagged':
+                        worksWithDetails.sort((a, b) => b.dateAdded - a.dateAdded);
+                        break;
+                }
+
+                const sortedWorksHTML = worksWithDetails.map(work => `
+                    <div class="work-item" data-fic-id="${work.ficId}"
+                         style="padding:12px 16px;margin:8px 0;border-radius:6px;background:#232136CC;
+                                border:1px solid #ddd;position:relative;">
+                        <div style="margin-bottom:8px;">
+                            <a href="https://archiveofourown.org/works/${work.workId}" target="_blank" style="color:#87ceeb;">
+                                ${work.title} by ${work.author}
+                            </a>
+                        </div>
+                        ${work.note ? `
+                            <div style="font-size:0.9em;margin-top:6px;padding:8px;background:#44415a40;border-radius:4px;">
+                                "${work.note.text}"
+                                ${work.note.date ? `<div style="font-size:0.8em;margin-top:4px;color:#999;">${work.note.date}</div>` : ""}
+                            </div>
+                        ` : ""}
+                        <button class="delete-tag-btn" data-fic-id="${work.ficId}" data-tag="${tag}"
+                                style="position:absolute;top:8px;right:8px;background:#f44336;color:white;
+                                       border:none;border-radius:4px;width:24px;height:24px;cursor:pointer;
+                                       font-size:12px;">×</button>
+                    </div>
+                `).join('');
+
+                worksList.innerHTML = sortedWorksHTML;
+
+                const deleteButtons = worksList.querySelectorAll(".delete-tag-btn");
+                deleteButtons.forEach((btn) => {
+                    UI.addHoverEffect(btn,
+                        { background: "#d32f2f", transform: "scale(1.1)" },
+                        { background: "#f44336", transform: "scale(1)" }
+                    );
+
+                    btn.addEventListener("click", async (e) => {
+                        e.stopPropagation();
+                        const ficId = btn.dataset.ficId;
+                        const tagToRemove = btn.dataset.tag;
+
+                        if (!confirm(`Remove "${tagToRemove}" tag from this story?`)) return;
+
+                        const labels = await Storage.loadLabels();
+                        if (labels[ficId] === tagToRemove) {
+                            delete labels[ficId];
+                            await Storage.saveLabels(labels);
+
+                            const workItem = btn.closest(".work-item");
+                            workItem.style.transition = "opacity 0.3s, transform 0.3s";
+                            workItem.style.opacity = "0";
+                            workItem.style.transform = "translateX(20px)";
+
+                            setTimeout(async () => {
+                                workItem.remove();
+                                const remainingWorks = Object.keys(await Storage.loadLabels()).filter(id => (await Storage.loadLabels())[id] === tagToRemove);
+                                if (remainingWorks.length === 0) {
+                                    content.querySelector("#back-to-tags").click();
+                                }
+                            }, 300);
+                        }
+                    });
+                });
+            }
+
+            content.querySelector('#sort-title').addEventListener('click', () => sortAndDisplayWorks('title'));
+            content.querySelector('#sort-date-updated').addEventListener('click', () => sortAndDisplayWorks('date-updated'));
+            content.querySelector('#sort-date-tagged').addEventListener('click', () => sortAndDisplayWorks('date-tagged'));
+
+            updateSortButtons('date-tagged');
+            await sortAndDisplayWorks('date-tagged');
+
+            // Back button event listener
+            content.querySelector("#back-to-tags").addEventListener("click", async () => {
+                const labels = await Storage.loadLabels();
+                const authorNotes = await Storage.loadAuthorNotes();
+                let tagGroups = {};
+
+                Object.entries(labels).forEach(([ficId, tag]) => {
+                    if (!tagGroups[tag]) tagGroups[tag] = [];
+                    tagGroups[tag].push(ficId);
+                });
+
+                const tagOrder = ["Finished", "To Read", "Not Interested", "Dropped", "Disliked", "Favourite", "Dish"];
+                const sortedTags = tagOrder.filter(tag => tagGroups[tag]);
+
+                const refreshedTagsList = sortedTags.map(tag => {
+                    const count = tagGroups[tag].length;
+                    const color = TAG_COLORS[tag] || { bg: "#6e6a86", text: "#000" };
+
+                    return `
+                        <div class="tag-item" data-tag="${tag}"
+                             style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;margin:4px 0;
+                                    border-radius:6px;background:#44415a40;border:2px solid ${color.bg};
+                                    box-shadow:0 0 8px 2px ${color.bg}55;cursor:pointer;transition:all 0.2s;">
+                            <span style="font-weight:bold;">${tag}</span>
+                            <div style="display:flex;align-items:center;gap:10px;">
+                                <span style="font-size:0.9em;">${count} work${count === 1 ? "" : "s"}</span>
+                                ${(tag === 'Favourite' || tag === 'Dish') ? `
+                                    <button class="download-tag-btn" data-tag="${tag}"
+                                            style="background:${color.bg};color:white;border:none;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:0.8em;"
+                                            onclick="event.stopPropagation();">📚 Download</button>
+                                ` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join("");
+
+                const authorNotesSection = Object.keys(authorNotes).length > 0 ? `
+                    <div style="margin-top:20px;padding-top:20px;border-top:1px solid #555;">
+                        <div class="author-notes-item" data-section="author-notes"
+                             style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;margin:4px 0;
+                                    border-radius:6px;background:#44415a40;border:2px solid #cbb974;
+                                    box-shadow:0 0 8px 2px #cbb97455;cursor:pointer;transition:all 0.2s;">
+                            <span style="font-weight:bold;">📝 Author Notes</span>
+                            <span style="font-size:0.9em;">${Object.keys(authorNotes).length} author${Object.keys(authorNotes).length === 1 ? "" : "s"}</span>
+                        </div>
+                    </div>
+                ` : '';
+
+                content.innerHTML = refreshedTagsList + authorNotesSection;
+
+                content.querySelectorAll(".tag-item").forEach(item => {
+                    const tag = item.dataset.tag;
+                    const color = TAG_COLORS[tag] || { bg: "#6e6a86", text: "#000" };
+
+                    UI.addHoverEffect(item,
+                        { background: "#232136CC", transform: "translateY(-1px)", boxShadow: `0 0 12px 3px ${color.bg}77` },
+                        { background: "#44415a40", transform: "", boxShadow: `0 0 8px 2px ${color.bg}55` }
+                    );
+
+                    item.addEventListener("click", async (e) => {
+                        e.stopPropagation();
+                        await showWorksForTag(tag, modal);
+                    });
+                });
+
+                content.querySelectorAll(".download-tag-btn").forEach(btn => {
+                    btn.addEventListener("click", async (e) => {
+                        e.stopPropagation();
+                        const tag = btn.dataset.tag;
+                        await downloadManager.downloadTaggedWorks(tag);
+                    });
+                });
+
+                const authorNotesItem = content.querySelector(".author-notes-item");
+                if (authorNotesItem) {
+                    UI.addHoverEffect(authorNotesItem,
+                        { background: "#232136CC", transform: "translateY(-1px)", boxShadow: "0 0 12px 3px #cbb97477" },
+                        { background: "#44415a40", transform: "", boxShadow: "0 0 8px 2px #cbb97455" }
+                    );
+                    authorNotesItem.addEventListener("click", (e) => {
+                        e.stopPropagation();
+                        showAuthorNotes(modal);
+                    });
+                }
+            });
+
+        } catch (error) {
+            console.error("Error in showWorksForTag:", error);
+        }
+    }
+
+    // Show Author Notes - Updated for IndexedDB
+    async function showAuthorNotes(modal) {
+        const authorNotes = await Storage.loadAuthorNotes();
+        const sortedAuthors = Object.entries(authorNotes).sort((a, b) => a[0].localeCompare(b[0]));
+
+        const authorsList = sortedAuthors.map(([authorId, note]) => `
+            <div class="author-note-item" data-author-id="${authorId}"
+                 style="padding:12px 16px;margin:8px 0;border-radius:6px;background:#232136CC;
+                        border:1px solid #ddd;position:relative;">
+                <div style="margin-bottom:8px;">
+                    <a href="https://archiveofourown.org/users/${authorId}" target="_blank" style="color:#cbb974;font-weight:bold;">
+                        ${authorId}
+                    </a>
+                </div>
+                <div style="font-size:0.95em;padding:8px;background:#44415a40;border-radius:4px;border-left:3px solid #cbb974;">
+                    <div style="white-space:pre-wrap;">"${note.text}"</div>
+                    ${note.date ? `<div style="font-size:0.8em;margin-top:4px;color:#999;">${note.date}</div>` : ""}
+                </div>
+                <button class="delete-author-note-btn" data-author-id="${authorId}"
+                        style="position:absolute;top:8px;right:8px;background:#f44336;color:white;
+                               border:none;border-radius:4px;width:24px;height:24px;cursor:pointer;font-size:12px;">×</button>
+            </div>
+        `).join("");
+
+        const content = document.querySelector("#tag-browser-content");
+        content.innerHTML = `
+            <div style="margin-bottom:20px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                    <button id="back-to-tags" style="background:none;border:1px solid #666;padding:6px 12px;border-radius:4px;cursor:pointer;color:#fff;">
+                        ← Back to Tags
+                    </button>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <div style="padding:6px 12px;border-radius:4px;font-weight:bold;background:#cbb974;color:#fff;">
+                            📝 Author Notes
+                        </div>
+                        <span style="color:#ccc;">${sortedAuthors.length} author${sortedAuthors.length === 1 ? "" : "s"}</span>
+                    </div>
+                </div>
+            </div>
+            <div id="authors-list">${authorsList}</div>
+        `;
+
+        content.querySelector("#back-to-tags").addEventListener("click", async () => {
+            const labels = await Storage.loadLabels();
+            let tagGroups = {};
+            Object.entries(labels).forEach(([ficId, tag]) => {
+                if (!tagGroups[tag]) tagGroups[tag] = [];
+                tagGroups[tag].push(ficId);
+            });
+
+            const tagOrder = ["Finished", "To Read", "Not Interested", "Dropped", "Disliked", "Favourite", "Dish"];
+            const sortedTags = tagOrder.filter(tag => tagGroups[tag]);
+
+            const refreshedTagsList = sortedTags.map(tag => {
+                const count = tagGroups[tag].length;
+                const color = TAG_COLORS[tag] || { bg: "#6e6a86", text: "#000" };
+
+                return `
+                    <div class="tag-item" data-tag="${tag}"
+                         style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;margin:4px 0;
+                                border-radius:6px;background:#44415a40;border:2px solid ${color.bg};
+                                box-shadow:0 0 8px 2px ${color.bg}55;cursor:pointer;transition:all 0.2s;">
+                        <span style="font-weight:bold;">${tag}</span>
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span style="font-size:0.9em;">${count} work${count === 1 ? "" : "s"}</span>
+                            ${(tag === 'Favourite' || tag === 'Dish') ? `
+                                <button class="download-tag-btn" data-tag="${tag}"
+                                        style="background:${color.bg};color:white;border:none;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:0.8em;"
+                                        onclick="event.stopPropagation();">📚 Download</button>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join("");
+
+            const authorNotesSection = Object.keys(authorNotes).length > 0 ? `
+                <div style="margin-top:20px;padding-top:20px;border-top:1px solid #555;">
+                    <div class="author-notes-item" data-section="author-notes"
+                         style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;margin:4px 0;
+                                border-radius:6px;background:#44415a40;border:2px solid #cbb974;
+                                box-shadow:0 0 8px 2px #cbb97455;cursor:pointer;transition:all 0.2s;">
+                        <span style="font-weight:bold;">📝 Author Notes</span>
+                        <span style="font-size:0.9em;">${Object.keys(authorNotes).length} author${Object.keys(authorNotes).length === 1 ? "" : "s"}</span>
+                    </div>
+                </div>
+            ` : '';
+
+            content.innerHTML = refreshedTagsList + authorNotesSection;
+
+            content.querySelectorAll(".tag-item").forEach(item => {
+                const tag = item.dataset.tag;
+                const color = TAG_COLORS[tag] || { bg: "#6e6a86", text: "#000" };
+                UI.addHoverEffect(item,
+                    { background: "#232136CC", transform: "translateY(-1px)", boxShadow: `0 0 12px 3px ${color.bg}77` },
+                    { background: "#44415a40", transform: "", boxShadow: `0 0 8px 2px ${color.bg}55` }
+                );
+                item.addEventListener("click", async (e) => {
+                    e.stopPropagation();
+                    await showWorksForTag(tag, modal);
+                });
+            });
+
+            const authorNotesItem = content.querySelector(".author-notes-item");
+            if (authorNotesItem) {
+                UI.addHoverEffect(authorNotesItem,
+                    { background: "#232136CC", transform: "translateY(-1px)", boxShadow: "0 0 12px 3px #cbb97477" },
+                    { background: "#44415a40", transform: "", boxShadow: "0 0 8px 2px #cbb97455" }
+                );
+                authorNotesItem.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    showAuthorNotes(modal);
+                });
+            }
+        });
+
+        content.querySelectorAll(".delete-author-note-btn").forEach(btn => {
+            UI.addHoverEffect(btn,
+                { background: "#d32f2f", transform: "scale(1.1)" },
+                { background: "#f44336", transform: "scale(1)" }
+            );
+
+            btn.addEventListener("click", async (e) => {
+                e.stopPropagation();
+                const authorId = btn.dataset.authorId;
+
+                if (!confirm(`Delete note for author "${authorId}"?`))// ==UserScript==
+// @name         AO3 Tagging and Notes
+// @version      8.1.0
+// @description  Tag AO3 works with IndexedDB storage for unlimited capacity
+// @match        https://archiveofourown.org/*
+// @icon         https://archiveofourown.org/favicon.ico
+// @updateURL    https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/AO3%20Tagging%20and%20Notes
+// @downloadURL  https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/AO3%20Tagging%20and%20Notes
+// @grant        GM_xmlhttpRequest
+// ==/UserScript==
+
+(function () {
+    "use strict";
+
+    // Constants
+    const KEYS = {
+        LABELS: "ao3_fic_labels",
+        NOTES: "ao3_fic_notes",
+        AUTHOR_NOTES: "ao3_author_notes",
+        LAST_DOWNLOAD: "ao3_last_download",
+        DOWNLOADED_WORKS: "ao3_downloaded_works",
+        TAG_DATES: "ao3_tag_dates",
+        METADATA_CACHE: "ao3_metadata_cache"
+    };
+
+    const PRESET_TAGS = ["Finished", "To Read", "Not Interested", "Dropped", "Disliked", "Favourite", "Dish"];
+    const COLLAPSE_TAGS = ["Finished", "Not Interested", "Dropped", "Disliked"];
+    const BORDER_TAGS = ["To Read", "Favourite", "Dish"];
+    const TAG_COLORS = {
+        Finished: { bg: "#8b7db8", text: "#fff" },
+        "To Read": { bg: "#6b8a7a", text: "#fff" },
+        "Not Interested": { bg: "#6e6a86", text: "#fff" },
+        Dropped: { bg: "#7a9bb8", text: "#fff" },
+        Disliked: { bg: "#8b7355", text: "#fff" },
+        Favourite: { bg: "#d6a5c9", text: "#fff" },
+        Dish: { bg: "#a85c6b", text: "#fff" },
+    };
+
+    const tagColors = {
+        "Finished": "#51cf66",
+        "To Read": "#4CAF50",
+        "Not Interested": "#ff9800",
+        "Dropped": "#ff6b6b",
+        "Disliked": "#ff3c3c",
+        "Favourite": "#c4a7e7",
+        "Dish": "#ff6bcb"
+    };
+
+    // IndexedDB Storage Manager
+    class AO3Storage {
+        static dbName = 'AO3_TaggingNotes';
+        static dbVersion = 1;
+        static db = null;
+        static initPromise = null;
+
+        static async init() {
+            if (this.initPromise) return this.initPromise;
+            
+            this.initPromise = new Promise((resolve, reject) => {
+                const request = indexedDB.open(this.dbName, this.dbVersion);
+                
+                request.onerror = () => reject(new Error(`IndexedDB error: ${request.error}`));
+                
+                request.onsuccess = () => {
+                    this.db = request.result;
+                    console.log('AO3 Tagging IndexedDB initialized');
+                    resolve(this.db);
+                };
+                
+                request.onupgradeneeded = (event) => {
+                    const db = event.target.result;
+                    
+                    if (!db.objectStoreNames.contains('storage')) {
+                        const store = db.createObjectStore('storage', { keyPath: 'key' });
+                        store.createIndex('timestamp', 'timestamp', { unique: false });
+                    }
+                    
+                    console.log('AO3 Tagging IndexedDB schema created');
+                };
+            });
+            
+            return this.initPromise;
+        }
+
+        static async getItem(key) {
+            try {
+                await this.init();
+                
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['storage'], 'readonly');
+                    const store = transaction.objectStore('storage');
+                    const request = store.get(key);
+                    
+                    request.onsuccess = () => {
+                        const result = request.result;
+                        resolve(result ? result.value : null);
+                    };
+                    
+                    request.onerror = () => reject(new Error(`Failed to get ${key}: ${request.error}`));
+                });
+            } catch (error) {
+                console.error('getItem failed:', error);
+                return null;
+            }
+        }
+
+        static async setItem(key, value) {
+            try {
+                await this.init();
+                
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['storage'], 'readwrite');
+                    const store = transaction.objectStore('storage');
+                    const request = store.put({ 
+                        key: key, 
+                        value: value,
+                        timestamp: Date.now()
+                    });
+                    
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(new Error(`Failed to set ${key}: ${request.error}`));
+                });
+            } catch (error) {
+                console.error('setItem failed:', error);
+                throw error;
+            }
+        }
+
+        static async removeItem(key) {
+            try {
+                await this.init();
+                
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['storage'], 'readwrite');
+                    const store = transaction.objectStore('storage');
+                    const request = store.delete(key);
+                    
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(new Error(`Failed to remove ${key}: ${request.error}`));
+                });
+            } catch (error) {
+                console.error('removeItem failed:', error);
+            }
+        }
+
+        static async clear() {
+            try {
+                await this.init();
+                
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['storage'], 'readwrite');
+                    const store = transaction.objectStore('storage');
+                    const request = store.clear();
+                    
+                    request.onsuccess = () => resolve();
+                    request.onerror = () => reject(new Error(`Failed to clear storage: ${request.error}`));
+                });
+            } catch (error) {
+                console.error('clear failed:', error);
+            }
+        }
+
+        static async exportData() {
+            try {
+                await this.init();
+                
+                const keys = await this.keys();
+                const ao3Keys = keys.filter(key => key.startsWith('ao3_'));
+                
+                const data = {};
+                for (const key of ao3Keys) {
+                    data[key] = await this.getItem(key);
+                }
+                
+                return {
+                    exportDate: new Date().toISOString(),
+                    dataKeys: ao3Keys.length,
+                    data: data
+                };
+            } catch (error) {
+                console.error('exportData failed:', error);
+                throw error;
+            }
+        }
+
+        static async keys() {
+            try {
+                await this.init();
+                
+                return new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction(['storage'], 'readonly');
+                    const store = transaction.objectStore('storage');
+                    const request = store.getAllKeys();
+                    
+                    request.onsuccess = () => resolve(request.result);
+                    request.onerror = () => reject(new Error(`Failed to get keys: ${request.error}`));
+                });
+            } catch (error) {
+                console.error('keys failed:', error);
+                return [];
+            }
+        }
+
+        // Migration from localStorage
+        static async migrateFromLocalStorage() {
+            try {
+                const localKeys = Object.keys(localStorage).filter(key => key.startsWith('ao3_'));
+                
+                if (localKeys.length === 0) {
+                    return { migrated: 0, message: 'No AO3 data found in localStorage' };
+                }
+                
+                let migrated = 0;
+                let errors = 0;
+                
+                for (const key of localKeys) {
+                    try {
+                        const value = localStorage.getItem(key);
+                        if (value) {
+                            await this.setItem(key, value);
+                            migrated++;
+                            console.log(`Migrated ${key}`);
+                        }
+                    } catch (error) {
+                        console.error(`Failed to migrate ${key}:`, error);
+                        errors++;
+                    }
+                }
+                
+                return {
+                    migrated: migrated,
+                    errors: errors,
+                    message: `Successfully migrated ${migrated} items${errors > 0 ? ` (${errors} errors)` : ''}`
+                };
+            } catch (error) {
+                console.error('Migration failed:', error);
+                throw error;
+            }
+        }
+    }
+
+    // Storage Utility Functions - Updated for IndexedDB
+    class Storage {
+        static async load(key, fallback = {}) {
+            try {
+                const data = await AO3Storage.getItem(key);
+                return data ? JSON.parse(data) : fallback;
+            } catch {
+                return fallback;
+            }
+        }
+
+        static async save(key, value) {
+            try {
+                await AO3Storage.setItem(key, JSON.stringify(value));
+            } catch (error) {
+                console.error(`Failed to save ${key}:`, error);
+            }
+        }
+
+        static async loadLabels() { return await this.load(KEYS.LABELS); }
+        static async saveLabels(v) { await this.save(KEYS.LABELS, v); }
+        static async loadNotes() { return await this.load(KEYS.NOTES); }
+        static async saveNotes(v) { await this.save(KEYS.NOTES, v); }
+        static async loadAuthorNotes() { return await this.load(KEYS.AUTHOR_NOTES); }
+        static async saveAuthorNotes(v) { await this.save(KEYS.AUTHOR_NOTES, v); }
+        static async loadTagDates() { return await this.load(KEYS.TAG_DATES); }
+        static async saveTagDates(v) { await this.save(KEYS.TAG_DATES, v); }
+        static async loadDownloadHistory() { return await this.load(KEYS.DOWNLOADED_WORKS); }
+        static async saveDownloadHistory(v) { await this.save(KEYS.DOWNLOADED_WORKS, v); }
+        static async loadMetadataCache() { return await this.load(KEYS.METADATA_CACHE); }
+        static async saveMetadataCache(v) { await this.save(KEYS.METADATA_CACHE, v); }
+    }
+
+    // Validation utilities
+    const Validator = {
+        isValidWorkId(id) {
+            if (!id || typeof id !== "string") return false;
+            if (id.includes('null') || id.includes('undefined') || id.includes('NaN')) return false;
+            if (id.trim() === '' || id.length > 200) return false;
+            return /^(bookmark_\d+|\d+|work_\d+)$/.test(id) || /bookmark_\d+/.test(id);
+        },
+
+        isValidAuthorId(id) {
+            if (!id || typeof id !== "string") return false;
+            if (id.includes('null') || id.includes('undefined') || id.includes('NaN')) return false;
+            if (id.trim() === '' || /^\d+$/.test(id) || id.length > 100) return false;
+            return /^[a-zA-Z0-9_-]+(_[a-zA-Z0-9_-]+)?$/.test(id);
+        }
+    };
+
+    // UI Utilities
+    const UI = {
+        formatDateTime: (d) => d.toLocaleString(undefined, {
+            year: "numeric", month: "short", day: "numeric",
+            hour: "2-digit", minute: "2-digit"
+        }),
+
+        createButton(text, styles = {}, onclick = null) {
+            const btn = document.createElement("button");
+            btn.textContent = text;
+            Object.assign(btn.style, {
+                padding: "6px 12px",
+                border: "none",
+                borderRadius: "4px",
+                cursor: "pointer",
+                ...styles
+            });
+            if (onclick) btn.addEventListener("click", onclick);
+            return btn;
+        },
+
+        createModal(content, title = "") {
+            const modal = document.createElement("div");
+            modal.innerHTML = `
+                <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center;">
+                    <div style="background:#232136CC;color:#fff;padding:20px;border-radius:8px;max-width:90%;max-height:80%;border:1px solid #ddd;overflow-y:auto;">
+                        ${title ? `<h3 style="margin-top:0;color:#fff;">${title}</h3>` : ""}
+                        ${content}
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(modal);
+
+            modal.addEventListener("click", (e) => {
+                if (e.target === modal || e.target.style.background?.includes("rgba")) {
+                    modal.remove();
+                }
+            });
+
+            return modal;
+        },
+
+        addHoverEffect(element, hoverStyles = {}, normalStyles = {}) {
+            element.addEventListener("mouseenter", () => Object.assign(element.style, hoverStyles));
+            element.addEventListener("mouseleave", () => Object.assign(element.style, normalStyles));
+        }
+    };
+
+    // Metadata Cache Manager - Updated for IndexedDB
+    class MetadataCache {
+        static async get(workId) {
+            const cache = await Storage.loadMetadataCache();
+            const cached = cache[workId];
+            if (cached && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+                return cached.data;
+            }
+            return null;
+        }
+
+        static async set(workId, data) {
+            const cache = await Storage.loadMetadataCache();
+            cache[workId] = { data, timestamp: Date.now() };
+            await Storage.saveMetadataCache(cache);
+        }
+
+        static async fetchWorkMetadata(workId) {
+            const cached = await this.get(workId);
+            if (cached) return cached;
+
+            return new Promise((resolve) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: `https://archiveofourown.org/works/${workId}`,
+                    timeout: 15000,
+                    onload: (response) => {
+                        let result = { title: `Work_${workId}`, author: 'Unknown_Author' };
+
+                        if (response.status === 200) {
+                            try {
+                                const parser = new DOMParser();
+                                const doc = parser.parseFromString(response.responseText, 'text/html');
+                                const titleEl = doc.querySelector('h2.title');
+                                const authorEl = doc.querySelector('a[rel="author"]');
+
+                                result = {
+                                    title: titleEl ? titleEl.textContent.trim() : result.title,
+                                    author: authorEl ? authorEl.textContent.trim() : result.author
+                                };
+                            } catch (error) {
+                                console.error('Error parsing metadata:', error);
+                            }
+                        }
+
+                        this.set(workId, result);
+                        resolve(result);
+                    },
+                    onerror: () => {
+                        const fallback = { title: `Work_${workId}`, author: 'Unknown_Author' };
+                        this.set(workId, fallback);
+                        resolve(fallback);
+                    },
+                    ontimeout: () => {
+                        const fallback = { title: `Work_${workId}`, author: 'Unknown_Author' };
+                        this.set(workId, fallback);
+                        resolve(fallback);
+                    }
+                });
+            });
+        }
+    }
+
+    // Mass Download Manager - Updated for IndexedDB
+    class MassDownloadManager {
+        constructor() {
+            this.isDownloading = false;
+            this.downloadQueue = [];
+            this.downloadedCount = 0;
+            this.totalCount = 0;
+            this.progressModal = null;
+            this.currentTag = null;
+        }
+
+        async downloadTaggedWorks(tag) {
+            if (this.isDownloading) {
+                alert('Download already in progress!');
+                return;
+            }
+
+            const labels = await Storage.loadLabels();
+            const taggedIds = Object.keys(labels).filter(id => labels[id] === tag);
+
+            if (taggedIds.length === 0) {
+                alert(`No fics tagged as "${tag}" found!`);
+                return;
+            }
+
+            const lastDownload = await this.getLastDownloadTime(tag);
+            const selectedIds = await this.showSelectionModal(tag, taggedIds, lastDownload);
+
+            if (!selectedIds || selectedIds.length === 0) return;
+
+            this.startDownload(selectedIds, tag);
+        }
+
+        startDownload(selectedIds, tag) {
+            this.isDownloading = true;
+            this.downloadQueue = selectedIds.slice();
+            this.downloadedCount = 0;
+            this.totalCount = selectedIds.length;
+            this.currentTag = tag;
+
+            this.showProgressModal();
+            this.processDownloadQueue();
+        }
+
+        showProgressModal() {
+            this.progressModal = UI.createModal(`
+                <h3 style="text-align:center;color:#c4a7e7;">📚 Downloading Tagged Works</h3>
+                <div style="margin:15px 0;">
+                    <div style="background:#44415a;border-radius:10px;overflow:hidden;height:20px;position:relative;">
+                        <div id="download-progress" style="background:linear-gradient(90deg, #c4a7e7, #e8c8dc);height:100%;width:0%;transition:width 0.3s;"></div>
+                        <div style="position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;color:#000;">
+                            <span id="progress-text">0 / ${this.totalCount}</span>
+                        </div>
+                    </div>
+                </div>
+                <div id="current-download" style="text-align:center;margin:10px 0;font-size:14px;color:#ccc;">Preparing download...</div>
+                <div style="text-align:center;margin-top:20px;">
+                    <button id="cancel-download" style="background:#f44336;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+                </div>
+            `);
+
+            document.getElementById('cancel-download').addEventListener('click', () => {
+                this.isDownloading = false;
+                this.progressModal.remove();
+                this.progressModal = null;
+            });
+        }
+
+        async processDownloadQueue() {
+            while (this.downloadQueue.length > 0 && this.isDownloading) {
+                const ficId = this.downloadQueue.shift();
+
+                document.getElementById('current-download').textContent = `Downloading: ${ficId}`;
+
+                try {
+                    await this.downloadFic(ficId);
+                } catch (error) {
+                    console.error(`Failed to download ${ficId}:`, error);
+                }
+
+                this.downloadedCount++;
+                const percentage = (this.downloadedCount / this.totalCount) * 100;
+                document.getElementById('download-progress').style.width = `${percentage}%`;
+                document.getElementById('progress-text').textContent = `${this.downloadedCount} / ${this.totalCount}`;
+
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+
+            if (this.isDownloading) {
+                this.finalizeDownloads();
+            }
+        }
+
+        async downloadFic(ficId) {
+            const workId = ficId.startsWith('bookmark_')
+                ? ficId.replace('bookmark_', '').replace(/^.*?(\d+).*$/, '$1')
+                : ficId.match(/\d+/)?.[0];
+
+            const metadata = await MetadataCache.fetchWorkMetadata(workId);
+            const htmlContent = await this.fetchWorkContent(workId);
+
+            const cleanTitle = metadata.title.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').substring(0, 100);
+            const cleanAuthor = metadata.author.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').substring(0, 50);
+            const filename = `${cleanAuthor} - ${cleanTitle} (${workId}).html`;
+
+            const blob = new Blob([htmlContent], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = filename;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            URL.revokeObjectURL(url);
+        }
+
+        fetchWorkContent(workId) {
+            const downloadUrl = `https://download.archiveofourown.org/downloads/${workId}/work_${workId}.html`;
+
+            return new Promise((resolve, reject) => {
+                GM_xmlhttpRequest({
+                    method: 'GET',
+                    url: downloadUrl,
+                    timeout: 30000,
+                    onload: (response) => {
+                        if (response.status === 200) {
+                            resolve(response.responseText);
+                        } else {
+                            reject(new Error(`HTTP ${response.status}`));
+                        }
+                    },
+                    onerror: () => reject(new Error('Network error')),
+                    ontimeout: () => reject(new Error('Request timeout'))
+                });
+            });
+        }
+
+        async showSelectionModal(tag, allIds, lastDownloadTime) {
+            return new Promise(async (resolve) => {
+                const loadingModal = UI.createModal(`
+                    <h3>Loading works for download selection...</h3>
+                    <div style="text-align:center;margin:20px 0;">
+                        <div style="display:inline-block;width:40px;height:40px;border:4px solid #f3f3f3;border-top:4px solid #3498db;border-radius:50%;animation:spin 1s linear infinite;"></div>
+                    </div>
+                    <style>
+                        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+                    </style>
+                `);
+
+                const workData = await Promise.all(
+                    allIds.map(async (ficId) => {
+                        const workId = ficId.replace("bookmark_", "").replace(/^.*?(\d+).*$/, "$1");
+                        const metadata = await MetadataCache.fetchWorkMetadata(workId);
+                        return { ficId, workId, metadata };
+                    })
+                );
+
+                const downloadHistory = await Storage.loadDownloadHistory();
+                const tagHistory = downloadHistory[tag] || 0;
+
+                loadingModal.remove();
+
+                const worksList = workData.map(({ ficId, workId, metadata }) => {
+                    const isNew = !tagHistory || tagHistory === 0;
+                    return `
+                        <div class="fic-item" style="display:flex;align-items:center;gap:10px;padding:8px;border-left:4px solid #666;border-radius:4px;margin:4px 0;background:#44415a40;cursor:pointer;">
+                            <input type="checkbox" class="work-checkbox" data-fic-id="${ficId}" ${isNew ? 'checked' : ''}>
+                            <div style="flex:1;">
+                                <div style="font-weight:bold;color:#fff;">${metadata.title}</div>
+                                <div style="font-size:0.9em;color:#ccc;">by ${metadata.author}</div>
+                                <div style="font-size:0.8em;color:#999;">ID: ${workId}</div>
+                            </div>
+                            ${!isNew ? '<span style="color:#ff6b6b;font-size:0.8em;">Previously downloaded</span>' : '<span style="color:#51cf66;font-size:0.8em;">New</span>'}
+                        </div>
+                    `;
+                }).join("");
+
+                const modal = UI.createModal(`
+                    <div style="max-width:700px;max-height:600px;">
+                        <div style="margin-bottom:15px;">
+                            ${lastDownloadTime ? `Last downloaded: ${new Date(lastDownloadTime).toLocaleDateString()}` : 'First time downloading this tag'}
+                        </div>
+
+                        <div style="margin-bottom:15px;display:flex;gap:10px;flex-wrap:wrap;">
+                            <button id="select-all" style="background:#4CAF50;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Select All (${allIds.length})</button>
+                            <button id="select-none" style="background:#ff9800;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Select None</button>
+                            <button id="select-new" style="background:#2196F3;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;">Select New Only</button>
+                            <span id="selected-count" style="align-self:center;margin-left:10px;font-weight:bold;">0 selected</span>
+                        </div>
+
+                        <div id="works-container" style="max-height:300px;overflow-y:auto;border:1px solid #ddd;border-radius:4px;padding:10px;background:#232136CC;">
+                            ${worksList}
+                        </div>
+
+                        <div style="display:flex;gap:10px;margin-top:20px;">
+                            <button id="download-selected" style="background:#4CAF50;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;flex:1;" disabled>Download Selected</button>
+                            <button id="cancel-selection" style="background:#f44336;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;flex:1;">Back</button>
+                        </div>
+                    </div>
+                `, `Select ${tag} Works to Download`);
+
+                const style = document.createElement("style");
+                style.textContent = `
+                    .fic-item {
+                        transition: border 0.2s, box-shadow 0.2s;
+                    }
+                    .fic-item.selected {
+                        border: 2px solid #c4a7e7 !important;
+                        box-shadow: 0 0 10px #c4a7e7;
+                    }
+                `;
+                document.head.appendChild(style);
+
+                const worksContainer = modal.querySelector('#works-container');
+                worksContainer.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                });
+
+                const checkboxes = modal.querySelectorAll('.work-checkbox');
+                const selectedCount = modal.querySelector('#selected-count');
+                const downloadBtn = modal.querySelector('#download-selected');
+
+                function updateSelectedCount() {
+                    const selected = Array.from(checkboxes).filter(cb => cb.checked);
+                    selectedCount.textContent = `${selected.length} selected`;
+                    downloadBtn.disabled = selected.length === 0;
+                }
+
+                const ficItems = modal.querySelectorAll('.fic-item');
+
+                ficItems.forEach(item => {
+                    const checkbox = item.querySelector('.work-checkbox');
+
+                    item.addEventListener('click', (e) => {
+                        if (e.target === checkbox) return;
+                        checkbox.checked = !checkbox.checked;
+                        item.classList.toggle('selected', checkbox.checked);
+                        updateSelectedCount();
+                    });
+
+                    if (checkbox.checked) item.classList.add('selected');
+                });
+
+                checkboxes.forEach(cb => cb.addEventListener('change', updateSelectedCount));
+
+                modal.querySelector('#select-all').addEventListener('click', () => {
+                    checkboxes.forEach(cb => cb.checked = true);
+                    updateSelectedCount();
+                });
+                modal.querySelector('#select-none').addEventListener('click', () => {
+                    checkboxes.forEach(cb => cb.checked = false);
+                    updateSelectedCount();
+                });
+                modal.querySelector('#select-new').addEventListener('click', () => {
+                    checkboxes.forEach(cb => {
+                        const isNew = !tagHistory || tagHistory === 0;
+                        cb.checked = isNew;
+                    });
+                    updateSelectedCount();
+                });
+                modal.querySelector('#download-selected').addEventListener('click', () => {
+                    const selected = Array.from(checkboxes)
+                        .filter(cb => cb.checked)
+                        .map(cb => cb.dataset.ficId);
+                    modal.remove();
+                    resolve(selected);
+                });
+                modal.querySelector('#cancel-selection').addEventListener('click', () => {
+                    modal.remove();
+                    resolve(null);
+                });
+
+                updateSelectedCount();
+            });
+        }
+
+        async finalizeDownloads() {
+            if (this.currentTag) {
+                await this.setLastDownloadTime(this.currentTag, Date.now());
+            }
+
+            this.progressModal?.remove();
+            this.progressModal = null;
+            this.isDownloading = false;
+
+            alert(`Downloads complete! ${this.downloadedCount} files downloaded.`);
+        }
+
+        async getLastDownloadTime(tag) {
+            const history = await Storage.loadDownloadHistory();
+            return history[tag] || 0;
+        }
+
+        async setLastDownloadTime(tag, timestamp) {
+            const history = await Storage.loadDownloadHistory();
+            history[tag] = timestamp;
+            await Storage.saveDownloadHistory(history);
+        }
+    }
+
+    // Tag Browser - Updated for IndexedDB
+    async function createTagBrowserModal() {
+        if (document.getElementById("tag-browser-modal")) return;
+
+        const labels = await Storage.loadLabels();
+        const notes = await Storage.loadNotes();
+        const authorNotes = await Storage.loadAuthorNotes();
+
+        let tagGroups = {};
+        Object.entries(

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AO3 Tagging and Notes
-// @version      1.0
+// @version      8.3.5-indexeddb
 // @description  Tag AO3 works with Google sync for cross-device data
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
@@ -117,8 +117,9 @@ const TAG_COLORS = Object.fromEntries(
                 }
             }
             // If not in cache, this is the first time this key is accessed.
-            // Save the fallback to the cache and DB for future use, then return it.
-            this.save(key, fallback);
+            // Just return the fallback value. DO NOT save it back to the database.
+            // This prevents a race condition where an early read wipes out the DB
+            // before the cache is populated.
             return fallback;
         }
 
@@ -160,7 +161,7 @@ const TAG_COLORS = Object.fromEntries(
     }
 
     // Create a single instance to be used throughout the script
-    const Storage = new IndexedDBStorage('AO3TNS_DB', 'data_store');
+    const Storage = new IndexedDBStorage('AO3TaggingNotesDB', 'data');
     // --- END REPLACEMENT ---
 
     // UI Utilities - Consolidated
@@ -2664,3 +2665,4 @@ function toggleWorkCollapse(work) {
     // --- END SCRIPT INITIALIZATION REWORK ---
 
 })();
+

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AO3 Tagging and Notes
-// @version      8.3.5-indexeddb
+// @version      1.1
 // @description  Tag AO3 works with Google sync for cross-device data
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
@@ -1060,10 +1060,22 @@ selectNew() {
 
     checkboxes.forEach((cb, index) => {
         const ficId = cb.dataset.ficId;
-        const isNew = !downloadHistory[ficId]; // Check individual fic, not tag
+        const isNew = !downloadHistory[ficId]; // Check individual fic download history
         cb.checked = isNew;
         if (ficItems[index]) {
             ficItems[index].classList.toggle('selected', isNew);
+
+            // Update the status text in the UI
+            const statusSpan = ficItems[index].querySelector('span[style*="color"]');
+            if (statusSpan) {
+                if (isNew) {
+                    statusSpan.textContent = 'New';
+                    statusSpan.style.color = '#51cf66';
+                } else {
+                    statusSpan.textContent = 'Previously downloaded';
+                    statusSpan.style.color = '#ff6b6b';
+                }
+            }
         }
     });
     this.updateSelectedCount();
@@ -1090,6 +1102,31 @@ selectNew() {
         destroy() {
             // Clean up event listeners if needed
         }
+
+      refreshDownloadStatus() {
+    const downloadHistory = Storage.loadDownloadHistory();
+    const ficItems = this.modal.querySelectorAll('.fic-item');
+
+    ficItems.forEach(ficItem => {
+        const checkbox = ficItem.querySelector('.work-checkbox');
+        if (checkbox) {
+            const ficId = checkbox.dataset.ficId;
+            const isNew = !downloadHistory[ficId];
+
+            const statusSpan = ficItem.querySelector('span[style*="color"]');
+            if (statusSpan) {
+                if (isNew) {
+                    statusSpan.textContent = 'New';
+                    statusSpan.style.color = '#51cf66';
+                } else {
+                    statusSpan.textContent = 'Previously downloaded';
+                    statusSpan.style.color = '#ff6b6b';
+                }
+            }
+        }
+    });
+}
+
     }
 
     // Event Delegation Manager for Work Items (on listing pages)
@@ -1640,7 +1677,9 @@ loadingModal.remove();
 
 // Build works list HTML
 const worksList = workData.map(({ ficId, workId, metadata }) => {
-    const isNew = !tagHistory || tagHistory === 0;
+    // FIX: Check individual fic download history, not tag history
+    const isNew = !downloadHistory[ficId]; // Check if THIS specific fic was downloaded
+
     return `
 <div class="fic-item" style="display:flex;align-items:center;gap:10px;padding:8px;border-left:4px solid #666;border-radius:4px;margin:4px 0;background:#44415a40;cursor:pointer;">
     <input type="checkbox" class="work-checkbox" data-fic-id="${ficId}" ${isNew ? 'checked' : ''}>
@@ -1681,7 +1720,34 @@ const worksList = workData.map(({ ficId, workId, metadata }) => {
                 // Use event delegation for this modal
                 const eventManager = new DownloadSelectionEventManager(modal);
                 eventManager.currentTag = tag;
-                eventManager.onDownloadSelected = (selected) => {
+                modal._downloadEventManager = eventManager;
+
+              setTimeout(() => {
+    const checkboxes = modal.querySelectorAll('.work-checkbox');
+    const ficItems = modal.querySelectorAll('.fic-item');
+
+    checkboxes.forEach((checkbox, index) => {
+        const ficId = checkbox.dataset.ficId;
+        const isNew = !downloadHistory[ficId];
+
+        if (isNew) {
+            // Set checkbox as checked
+            checkbox.checked = true;
+
+            // Add selected styling to the fic item
+            if (ficItems[index]) {
+                ficItems[index].classList.add('selected');
+            }
+        }
+    });
+
+    // Update the selected count display
+    if (eventManager.updateSelectedCount) {
+        eventManager.updateSelectedCount();
+    }
+}, 0); // Small delay to ensure DOM is ready
+
+              eventManager.onDownloadSelected = (selected) => {
                     eventManager.destroy();
                     modal.remove();
                     resolve(selected);
@@ -1807,14 +1873,23 @@ Storage.saveDownloadHistory(downloadHistory);
             });
         }
 
-        finalizeDownloads() {
+finalizeDownloads() {
+    this.progressModal?.remove();
+    this.progressModal = null;
+    this.isDownloading = false;
 
-            this.progressModal?.remove();
-            this.progressModal = null;
-            this.isDownloading = false;
-
-            alert(`Downloads complete! ${this.downloadedCount} files downloaded.`);
+    // If there's an active download selection modal, refresh its status
+    const selectionModal = document.querySelector('#works-container');
+    if (selectionModal) {
+        // Find the event manager instance and refresh status
+        const modal = selectionModal.closest('[class*="backdrop"]');
+        if (modal && modal._downloadEventManager) {
+            modal._downloadEventManager.refreshDownloadStatus();
         }
+    }
+
+    alert(`Downloads complete! ${this.downloadedCount} files downloaded.`);
+}
 
         getLastDownloadTime(tag) {
             const history = Storage.loadDownloadHistory();

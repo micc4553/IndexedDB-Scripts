@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AO3 Tagging and Notes
-// @version      1.1
+// @version      1.1.1
 // @description  Tag AO3 works with Google sync for cross-device data
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
@@ -1276,15 +1276,19 @@ handleTagButtonClick(workId, tag, button) {
 
     // Metadata Cache Manager (using your clean version)
     class MetadataCache {
+// Replace the MetadataCache class methods with these versions:
+
 static get(workId) {
     const cache = Storage.loadMetadataCache();
     const cached = cache[workId];
-    if (cached && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+
+    // Always use cached data if it exists, regardless of timestamp
+    if (cached) {
+        // Handle both old and new cache structures
         if (cached.data && cached.data.title && cached.data.author) {
-            return cached.data;  // Return just the data, not the wrapper
-        } else {
-            delete cache[workId];
-            Storage.saveMetadataCache(cache);
+            return cached.data;  // New structure with wrapper
+        } else if (cached.title && cached.author) {
+            return cached;  // Old structure, direct data
         }
     }
     return null;
@@ -1303,48 +1307,47 @@ static set(workId, data) {
     }
 }
 
-        static async fetchWorkMetadata(workId, skipNetworkFetch = false) {
-            // Check cache first
-            const cached = this.get(workId);
-            if (cached && cached.title && cached.title !== `Work ${workId}`) {
-    return cached;
-}
+static async fetchWorkMetadata(workId, skipNetworkFetch = false) {
+    // ALWAYS check cache first and use it if available
+    const cached = this.get(workId);
+    if (cached && cached.title && cached.author) {
+        console.log(`Using cached metadata for work ${workId}: ${cached.title}`);
+        return cached;
+    }
 
-            // Return placeholder if network fetch is disabled
-            if (skipNetworkFetch) {
-                return this.createFallback(workId, 'needsRefresh');
-            }
+    // Only fetch from network if explicitly requested AND cache is empty
+    if (skipNetworkFetch) {
+        console.log(`No cached data for work ${workId}, returning placeholder`);
+        return this.createFallback(workId, 'needsRefresh');
+    }
 
-            try {
-                console.log(`Fetching metadata for work ${workId} from AO3`);
+    // If we get here, we have no cached data and need to fetch
+    console.log(`No cached metadata found for work ${workId}, fetching from AO3...`);
 
-                const response = await this.fetchWorkPage(workId);
-                const html = await response.text();
+    try {
+        const response = await this.fetchWorkPage(workId);
+        const html = await response.text();
 
-                // Check for various access issues
-                const pageStatus = this.analyzePageStatus(html, response.status);
-                if (pageStatus !== 'success') {
-                    return this.createFallback(workId, pageStatus);
-                }
-
-                // Parse the HTML for title and author
-                const metadata = this.parseWorkMetadata(html, workId);
-
-                console.log(`Successfully fetched metadata for ${workId}:`, metadata);
-
-                // Only cache if we got real data
-if (this.isValidMetadata(metadata, workId)) {
-    this.set(workId, metadata);  // Just pass metadata directly
-}
-
-                return metadata;
-
-            } catch (error) {
-                console.error(`Failed to fetch metadata for work ${workId}:`, error);
-                return this.createFallback(workId, 'networkError');
-            }
+        const pageStatus = this.analyzePageStatus(html, response.status);
+        if (pageStatus !== 'success') {
+            return this.createFallback(workId, pageStatus);
         }
 
+        const metadata = this.parseWorkMetadata(html, workId);
+        console.log(`Successfully fetched metadata for ${workId}:`, metadata);
+
+        // Cache the new data
+        if (this.isValidMetadata(metadata, workId)) {
+            this.set(workId, metadata);
+        }
+
+        return metadata;
+
+    } catch (error) {
+        console.error(`Failed to fetch metadata for work ${workId}:`, error);
+        return this.createFallback(workId, 'networkError');
+    }
+}
         static async fetchWorkPage(workId) {
             // Add respectful delay
             await new Promise(resolve =>

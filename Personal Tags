@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AO3 Personal Tags
-// @version      1.2.3
+// @version      1.2.4
 // @description  Add personal tags to AO3 works with customizable links (Firefox 115 ESR Compatible)
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
@@ -366,14 +366,14 @@ async function addTagsToWorkPage() {
     // Suggestion box
     const suggestionBox = document.createElement('div');
     suggestionBox.style.cssText = `
-    position: fixed;
-    background: #fff;
+    position: absolute;
+    background: #2A273F;
     border: 1px solid #ccc;
     max-height: 150px;
     overflow-y: auto;
-    z-index: 1001;
+    z-index: 1000;
     display: none;
-    min-width: 200px;
+    min-width: 300px;
 `;
 
     buttonContainer.appendChild(addButton);
@@ -583,7 +583,7 @@ if (usedTags.length) {
         item.textContent = tag;
         item.className = 'suggestion-item';
         item.dataset.index = index;
-        item.style.cssText = 'padding: 5px 10px; cursor: pointer; color: #333;';
+        item.style.cssText = 'padding: 5px 10px; cursor: pointer; font-size: 16px;';
         item.addEventListener('mouseenter', () => {
             selectedIndex = index;
             updateSuggestionSelection(suggestionBox.querySelectorAll('.suggestion-item'));
@@ -600,7 +600,7 @@ if (usedTags.length) {
         });
         suggestionBox.appendChild(item);
     });
-suggestionBox.style.display = 'block !important';
+suggestionBox.style.display = 'block';
   console.log('Should be showing suggestions now'); // Debug line
 
 } else {
@@ -1084,3 +1084,4 @@ return cleaned;
     }
 
 })();
+

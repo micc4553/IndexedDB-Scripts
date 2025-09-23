@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AO3 Tagging and Notes
-// @version      1.2
+// @version      1.2.1
 // @description  Tag AO3 works with Google sync for cross-device data
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
@@ -670,7 +670,7 @@ updateWorksDisplay() {
                         </svg>
                     </button>
                 </div>
-                ${this.currentTag === "To Read" && summary ? `
+                ${["Finished", "To Read", "Liked", "Dish"].includes(this.currentTag) && summary ? `
                     <div style="font-size:0.85em;margin:8px 0;padding:8px;background:#44415a20;border-radius:4px;">
                         <strong>Summary:</strong> ${summary}
                     </div>
@@ -1623,7 +1623,7 @@ const worksList = workData.map(({ ficId, workId, metadata }) => {
 }).join("");
 
                 const modal = UI.createModal(`
-                    <div style="max-width:700px;max-height:600px;">
+    <div style="width:500px !important;min-width:500px !important;max-width:500px !important;max-height:600px;">
                         <div style="margin-bottom:15px;">
                             ${lastDownloadTime ? `Last downloaded: ${new Date(lastDownloadTime).toLocaleDateString()}` : 'First time downloading this tag'}
                         </div>
@@ -2074,7 +2074,7 @@ wrapper.deleteNote = function() {
         modal.id = "tag-browser-modal";
         modal.innerHTML = `
             <div class="backdrop" style="position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:100000;display:flex;align-items:center;justify-content:center;">
-                <div style="background:#232136CC;color:#fff;padding:0;border-radius:8px;width:90%;max-width:600px;height:80%;max-height:700px;display:flex;flex-direction:column;border:1px solid #ddd;">
+                <div style="background:#232136CC;color:#fff;padding:10px;border-radius:8px;width:90%;max-width:550px;height:80%;max-height:700px;display:flex;flex-direction:column;border:1px solid #ddd;">
                     <div style="padding:20px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;align-items:center;">
                         <h3 style="margin:0;color:#fff;">Browse Tagged Fics (${Object.keys(labels).length} total)</h3>
                     </div>

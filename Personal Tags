@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AO3 Personal Tags
-// @version      1.3
+// @version      1.3.1
 // @description  Add personal tags to AO3 works with customizable links (Firefox 115 ESR Compatible)
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
@@ -837,7 +837,7 @@ var tagLinks = await getTagLinks();
     var work = works[workId];
 
     var workItem = document.createElement('div');
-    workItem.style.cssText = 'margin: 10px 0; padding: 8px; border-left: 3px solid;background: #2A273F; border-radius: 6px;';
+    workItem.style.cssText = 'margin: 10px 0; padding: 8px; border-left: 3px solid;background: #2A273F; border-radius: 4px;';
 
     workItem.innerHTML = '<h4 style="margin: 0 0 5px 0;"><a href="/works/' + workId + '">' + (work.title || 'Untitled Work') + '</a></h4>' +
         '<p style="margin: 0; color: #999; font-size: 0.9em;">by ' + (work.author && work.author.trim() ? work.author : 'Anonymous') + '</p>' +
@@ -900,15 +900,18 @@ async function showPersonalTagsModal() {
   var allTags = await Storage.load(KEYS.PERSONAL_TAGS, {});
         var tagsArray = [];
 
-        for (var workId in allTags) {
-            var workTags = allTags[workId];
-            for (var i = 0; i < workTags.length; i++) {
-                if (tagsArray.indexOf(workTags[i]) === -1) {
-                    tagsArray.push(workTags[i]);
-                }
-            }
+var tagCounts = {};
+for (var workId in allTags) {
+    var workTags = allTags[workId];
+    for (var i = 0; i < workTags.length; i++) {
+        var tag = workTags[i];
+        if (tagsArray.indexOf(tag) === -1) {
+            tagsArray.push(tag);
         }
-        var sortedTags = tagsArray.sort();
+        tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+    }
+}
+var sortedTags = tagsArray.sort();
 
         if (sortedTags.length === 0) {
             alert('No personal tags found.');
@@ -970,7 +973,7 @@ for (var i = 0; i < sortedTags.length; i++) {
     tagContainer.style.cssText = 'display: inline-flex; align-items: center; padding: 4px 8px; background: #44415a40; border-radius: 4px; gap: 6px; transition: background-color 0.2s;';
 
 var tagEl = document.createElement('a');
-    tagEl.textContent = tag;
+    tagEl.textContent = tag + ' (' + tagCounts[tag] + ')';
 
     // Use IIFE to handle async operation
     (async function(element, tagName) {

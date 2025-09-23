@@ -4,8 +4,8 @@
 // @description  Sync AO3 tagging and notes data across devices using Google Apps Script
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
-// @updateURL    https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Sync%20Manager
-// @downloadURL  https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Sync%20Manager
+// @updateURL    https://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Sync%20Manager
+// @downloadURL  https://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Sync%20Manager
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 

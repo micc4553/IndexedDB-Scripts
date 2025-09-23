@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         AO3 Tagging and Notes
-// @version      1.1.2
+// @version      1.2
 // @description  Tag AO3 works with Google sync for cross-device data
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
-// @updateURL    https://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Tagging%20and%20Notes
+// @updateURL    hhttps://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Tagging%20and%20Notes
 // @downloadURL  https://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Tagging%20and%20Notes
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
@@ -13,16 +13,17 @@
     "use strict";
 
     // Constants
-    const KEYS = {
-        LABELS: "ao3_fic_labels",
-        NOTES: "ao3_fic_notes",
-        AUTHOR_NOTES: "ao3_author_notes",
-        DELETED_AUTHOR_NOTES: "ao3_deleted_author_notes",
-        DELETED_NOTES: "ao3_deleted_notes",
-        LAST_DOWNLOAD: "ao3_last_download",
-        DOWNLOADED_WORKS: "ao3_downloaded_works",
-        METADATA_CACHE: "ao3_metadata_cache"
-    };
+const KEYS = {
+    LABELS: "ao3_fic_labels",
+    NOTES: "ao3_fic_notes",
+    AUTHOR_NOTES: "ao3_author_notes",
+    DELETED_AUTHOR_NOTES: "ao3_deleted_author_notes",
+    DELETED_NOTES: "ao3_deleted_notes",
+    DELETED_LABELS: "ao3_deleted_labels",
+    LAST_DOWNLOAD: "ao3_last_download",
+    DOWNLOADED_WORKS: "ao3_downloaded_works",
+    METADATA_CACHE: "ao3_metadata_cache"
+};
 
 const PRESET_TAGS = ["Finished", "To Read", "Not Interested", "Dropped", "Disliked", "Liked", "Favourite", "Dish"];
 
@@ -141,6 +142,8 @@ const TAG_COLORS = Object.fromEntries(
         saveLabels(v) { this.save(KEYS.LABELS, v); }
         loadNotes() { return this.load(KEYS.NOTES); }
         saveNotes(v) { this.save(KEYS.NOTES, v); }
+      loadDeletedLabels() { return this.load(KEYS.DELETED_LABELS, {}); }
+saveDeletedLabels(v) { this.save(KEYS.DELETED_LABELS, v); }
         loadAuthorNotes() { return this.load(KEYS.AUTHOR_NOTES); }
         saveAuthorNotes(v) { this.save(KEYS.AUTHOR_NOTES, v); }
         loadDownloadHistory() { return this.load(KEYS.DOWNLOADED_WORKS); }

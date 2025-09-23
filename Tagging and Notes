@@ -763,10 +763,12 @@ this.workData = await Promise.all(
             const workId = normalizeWorkId(ficId);
             const metadata = await MetadataCache.fetchWorkMetadata(workId);
 
-            let summary = '';
-            if (tag === "To Read") {
-                summary = await fetchWorkSummary(workId);
-            }
+let summary = '';
+const tagsWithSummary = ["To Read", "Finished", "Liked", "Favourite", "Dish"];
+
+if (tagsWithSummary.includes(tag)) {
+    summary = await fetchWorkSummary(workId);
+}
 
             return {
                 ficId,

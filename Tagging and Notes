@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         AO3 Tagging and Notes
-// @version      8.3.5-indexeddb
+// @version      1.1.2
 // @description  Tag AO3 works with Google sync for cross-device data
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
-// @updateURL    https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Tagging%20and%20Notes
-// @downloadURL  https://raw.githubusercontent.com/micc4553/AO3-Scripts/refs/heads/main/Tagging%20and%20Notes
+// @updateURL    https://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Tagging%20and%20Notes
+// @downloadURL  https://raw.githubusercontent.com/micc4553/IndexedDB-Scripts/refs/heads/main/Tagging%20and%20Notes
 // @grant        GM_xmlhttpRequest
 // ==/UserScript==
 

@@ -212,7 +212,7 @@ async function removeWorkFromTag(tag, workId) {
         overlay.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 9999;';
 
         var modal = document.createElement('div');
-        modal.style.cssText = 'background: #232136CC; color: #FFF; padding: 20px; border: 1.5px solid #999; border-radius: 6px; max-width: 500px; width: 90%; box-shadow: 0 0 10px rgba(0,0,0,0.5); font-family: sans-serif;';
+        modal.style.cssText = 'background: #232136CC; color: #FFF; padding: 20px; border: 1.5px solid #ddd; border-radius: 6px; max-width: 500px; width: 90%; box-shadow: 0 0 10px rgba(0,0,0,0.5); font-family: sans-serif;';
 
         modal.addEventListener('click', function(e) {
             e.stopPropagation();
@@ -228,7 +228,7 @@ var input = document.createElement('input');
 input.type = 'url';
 getTagLink(tag).then(link => input.value = link);  // Set input value, not tagEl.href
 input.placeholder = 'Enter URL...';
-        input.style.cssText = 'width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #999; border-radius: 3px; background: #2A273F; color: #FFF; box-sizing: border-box;';
+        input.style.cssText = 'width: 100%; padding: 8px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 3px; background: #2A273F; color: #FFF; box-sizing: border-box;';
         modal.appendChild(input);
 
         var buttonsContainer = document.createElement('div');
@@ -930,7 +930,7 @@ var sortedTags = tagsArray.sort();
         });
 
         var modal = document.createElement('div');
-        modal.style.cssText = 'background: #232136CC; color: #FFF; padding: 20px; border: 1.5px solid #999; border-radius: 6px; max-width: 600px; width: 90%; max-height: 80%; overflow-y: auto; box-shadow: 0 0 10px rgba(0,0,0,0.5); position: relative; font-family: sans-serif;';
+        modal.style.cssText = 'background: #232136CC; color: #FFF; padding: 20px; border: 1.5px solid #ddd; border-radius: 6px; max-width: 600px; width: 90%; max-height: 80%; overflow-y: auto; box-shadow: 0 0 10px rgba(0,0,0,0.5); position: relative; font-family: sans-serif;';
 
         modal.addEventListener('click', function(e) {
             e.stopPropagation();
@@ -939,7 +939,7 @@ var sortedTags = tagsArray.sort();
         overlay.appendChild(modal);
 
 var header = document.createElement('div');
-header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 1.2em; margin-bottom: 15px; border-bottom: 1px solid #555; padding-bottom: 8px;';
+header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 1.2em; margin-bottom: 15px; border-bottom: 1px solid #ddd; padding-bottom: 8px;';
 
 var headerText = document.createElement('span');
 headerText.textContent = '📌 Your Personal Tags';

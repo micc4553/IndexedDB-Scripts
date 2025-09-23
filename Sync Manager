@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AO3 Sync Manager
-// @version      1.0
+// @version      1.1
 // @description  Sync AO3 tagging and notes data across devices using Google Apps Script
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
@@ -28,9 +28,10 @@
         DELETED_PERSONAL_TAGS: "ao3_deleted_personal_tags",
         DELETED_TAG_LOOKUP: "ao3_deleted_tag_lookup"
     };
+
 // IndexedDB Storage Class
 class IndexedDBStorage {
-    static dbName = 'AO3PersonalTagsDB';
+    static dbName = 'AO3DB';  // Changed from AO3PersonalTagsDB
     static dbVersion = 1;
     static storeName = 'data';
     static db = null;
@@ -51,7 +52,7 @@ class IndexedDBStorage {
             request.onupgradeneeded = (event) => {
                 const db = event.target.result;
                 if (!db.objectStoreNames.contains(this.storeName)) {
-                    db.createObjectStore(this.storeName);
+                    db.createObjectStore(this.storeName, { keyPath: 'key' });
                 }
             };
         });
@@ -67,7 +68,7 @@ class IndexedDBStorage {
             return new Promise((resolve) => {
                 request.onsuccess = () => {
                     const result = request.result;
-                    resolve(result !== undefined ? result : fallback);
+                    resolve(result?.value !== undefined ? result.value : fallback);
                 };
                 request.onerror = () => resolve(fallback);
             });
@@ -81,7 +82,7 @@ class IndexedDBStorage {
             const db = await this.initDB();
             const transaction = db.transaction([this.storeName], 'readwrite');
             const store = transaction.objectStore(this.storeName);
-            store.put(value, key);
+            store.put({ key, value });
 
             return new Promise((resolve, reject) => {
                 transaction.oncomplete = () => resolve();
@@ -92,46 +93,6 @@ class IndexedDBStorage {
         }
     }
 }
-
-    // Storage utility functions
-    class Storage {
-        static load(key, fallback = {}) {
-            try {
-                return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-            } catch {
-                return fallback;
-            }
-        }
-
-        static save(key, value) {
-            localStorage.setItem(key, JSON.stringify(value));
-        }
-
-        static loadLabels() { return this.load(KEYS.LABELS); }
-        static saveLabels(v) { this.save(KEYS.LABELS, v); }
-        static loadNotes() { return this.load(KEYS.NOTES); }
-        static saveNotes(v) { this.save(KEYS.NOTES, v); }
-        static loadAuthorNotes() { return this.load(KEYS.AUTHOR_NOTES); }
-        static saveAuthorNotes(v) { this.save(KEYS.AUTHOR_NOTES, v); }
-        static loadSyncSettings() { return this.load(KEYS.SETTINGS); }
-        static saveSyncSettings(v) { this.save(KEYS.SETTINGS, v); }
-      static loadDeletedLabels() { return this.load(KEYS.DELETED_LABELS); }
-static saveDeletedLabels(v) { this.save(KEYS.DELETED_LABELS, v); }
-        static loadDeletedNotes() { return this.load(KEYS.DELETED_NOTES); }
-        static saveDeletedNotes(v) { this.save(KEYS.DELETED_NOTES, v); }
-        static loadDeletedAuthorNotes() { return this.load(KEYS.DELETED_AUTHOR_NOTES); }
-        static saveDeletedAuthorNotes(v) { this.save(KEYS.DELETED_AUTHOR_NOTES, v); }
-        static loadPersonalTags() { return this.load(KEYS.PERSONAL_TAGS); }
-        static savePersonalTags(v) { this.save(KEYS.PERSONAL_TAGS, v); }
-        static loadTagLookup() { return this.load(KEYS.TAG_LOOKUP); }
-        static saveTagLookup(v) { this.save(KEYS.TAG_LOOKUP, v); }
-        static loadTagLinks() { return this.load(KEYS.TAG_LINKS); }
-        static saveTagLinks(v) { this.save(KEYS.TAG_LINKS, v); }
-static loadDeletedPersonalTags() { return this.load(KEYS.DELETED_PERSONAL_TAGS); }
-static saveDeletedPersonalTags(v) { this.save(KEYS.DELETED_PERSONAL_TAGS, v); }
-static loadDeletedTagLookup() { return this.load(KEYS.DELETED_TAG_LOOKUP); }
-static saveDeletedTagLookup(v) { this.save(KEYS.DELETED_TAG_LOOKUP, v); }
-    }
 
     // Validation utilities
     const Validator = {
@@ -244,9 +205,10 @@ static saveDeletedTagLookup(v) { this.save(KEYS.DELETED_TAG_LOOKUP, v); }
     // Google Sync Manager
     class GoogleSyncManager {
         constructor() {
-            this.settings = Storage.loadSyncSettings();
+            this.settings = JSON.parse(localStorage.getItem(KEYS.SETTINGS) || '{}');
             this.syncInterval = (this.settings.syncInterval || 60) * 1000;
             this.isSyncing = false;
+            this.showingStatus = false;
             this.syncTimer = null;
             this.timeUntilNextSync = 0;
 
@@ -339,16 +301,15 @@ static saveDeletedTagLookup(v) { this.save(KEYS.DELETED_TAG_LOOKUP, v); }
         }
 
         startCountdownTimer() {
-            setInterval(() => {
-                // Only update countdown if not currently syncing
-                if (!this.isSyncing && this.timeUntilNextSync > 0) {
-                    this.timeUntilNextSync--;
-                }
-                // Only call updateWidget if not syncing
-                if (!this.isSyncing) {
-                    this.updateWidget();
-                }
-            }, 1000);
+setInterval(() => {
+    if (!this.isSyncing && this.timeUntilNextSync > 0) {
+        this.timeUntilNextSync--;
+    }
+    // Only update widget if not syncing AND not showing status message
+    if (!this.isSyncing && !this.showingStatus) {  // CHANGE THIS LINE
+        this.updateWidget();
+    }
+}, 1000);
         }
 
         updateWidget(status = "idle") {
@@ -373,15 +334,18 @@ static saveDeletedTagLookup(v) { this.save(KEYS.DELETED_TAG_LOOKUP, v); }
                     const svg = widget.querySelector("svg");
                     svg.style.animation = "spin 1s linear infinite";
                     break;
-                case "success":
-                    statusText.textContent = "Synced!";
-                    countdown.textContent = "";
-                    widget.style.background = "#e8f5e8";
-                    // Stop spinning
-                    const successSvg = widget.querySelector("svg");
-                    successSvg.style.animation = "none";
-                    setTimeout(() => this.updateWidget(), 5000);
-                    break;
+case "success":
+    statusText.textContent = "Synced!";
+    countdown.textContent = "";
+    widget.style.background = "#e8f5e8";
+    const successSvg = widget.querySelector("svg");
+    successSvg.style.animation = "none";
+    this.showingStatus = true;  // ADD THIS LINE
+    setTimeout(() => {
+        this.showingStatus = false;  // ADD THIS LINE
+        this.updateWidget();
+    }, 5000);
+    break;
                 case "error":
                     statusText.textContent = "Error";
                     countdown.textContent = "";
@@ -410,22 +374,23 @@ async performSync() {
             this.updateWidget("syncing");
 
             try {
-                const syncData = {
-                    action: "sync",
-                    data: {
-                        labels: localStorage.getItem(KEYS.LABELS) || "{}",
-                        notes: localStorage.getItem(KEYS.NOTES) || "{}",
-                        authorNotes: localStorage.getItem(KEYS.AUTHOR_NOTES) || "{}",
-                        deletedNotes: Object.keys(Storage.loadDeletedNotes()),
-                        deletedAuthorNotes: Object.keys(Storage.loadDeletedAuthorNotes()),
-personalTags: JSON.stringify(await IndexedDBStorage.load(KEYS.PERSONAL_TAGS, {})),
-tagLookup: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LOOKUP, {})),
-tagLinks: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LINKS, {})),
-        deletedPersonalTags: Object.keys(Storage.loadDeletedPersonalTags()),
-        deletedTagLookup: Object.keys(Storage.loadDeletedTagLookup()),
-                        timestamp: Date.now(),
-                    },
-                };
+const syncData = {
+    action: "sync",
+    data: {
+        labels: JSON.stringify(await IndexedDBStorage.load(KEYS.LABELS, {})),
+        notes: JSON.stringify(await IndexedDBStorage.load(KEYS.NOTES, {})),
+        authorNotes: JSON.stringify(await IndexedDBStorage.load(KEYS.AUTHOR_NOTES, {})),
+        personalTags: JSON.stringify(await IndexedDBStorage.load(KEYS.PERSONAL_TAGS, {})),
+        tagLookup: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LOOKUP, {})),
+        tagLinks: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LINKS, {})),
+        deletedLabels: Object.keys(await IndexedDBStorage.load(KEYS.DELETED_LABELS, {})),
+        deletedNotes: Object.keys(await IndexedDBStorage.load(KEYS.DELETED_NOTES, {})),
+        deletedAuthorNotes: Object.keys(await IndexedDBStorage.load(KEYS.DELETED_AUTHOR_NOTES, {})),
+        deletedPersonalTags: Object.keys(await IndexedDBStorage.load(KEYS.DELETED_PERSONAL_TAGS, {})),
+        deletedTagLookup: Object.keys(await IndexedDBStorage.load(KEYS.DELETED_TAG_LOOKUP, {})),
+        timestamp: Date.now(),
+    },
+};
 
                 const response = await this.sendRequest(syncData);
 
@@ -468,102 +433,101 @@ tagLinks: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LINKS, {})),
             });
         }
 
-        async mergeData(serverData) {
-            // Merge labels
-            if (serverData.labels) {
-                const currentLabels = Storage.loadLabels();
-                const serverLabels = JSON.parse(serverData.labels);
-                const mergedLabels = { ...currentLabels };
+async mergeData(serverData) {
+    // Merge labels
+    if (serverData.labels) {
+        const currentLabels = await IndexedDBStorage.load(KEYS.LABELS, {});
+        const serverLabels = JSON.parse(serverData.labels);
+        const mergedLabels = { ...currentLabels };
 
-                Object.entries(serverLabels).forEach(([id, tag]) => {
-                    if (Validator.isValidWorkId(id) && !currentLabels[id]) {
-                        mergedLabels[id] = tag;
-                    }
-                });
-
-                Storage.saveLabels(mergedLabels);
+        Object.entries(serverLabels).forEach(([id, tag]) => {
+            if (Validator.isValidWorkId(id) && !currentLabels[id]) {
+                mergedLabels[id] = tag;
             }
+        });
 
-            // Merge notes
-            if (serverData.notes) {
-                const currentNotes = Storage.loadNotes();
-                const serverNotes = JSON.parse(serverData.notes);
-                const mergedNotes = { ...currentNotes };
+        await IndexedDBStorage.save(KEYS.LABELS, mergedLabels);
+    }
 
-                Object.entries(serverNotes).forEach(([id, note]) => {
-                    if (Validator.isValidWorkId(id) && !currentNotes[id]) {
-                        mergedNotes[id] = note;
-                    }
-                });
+    // Merge notes
+    if (serverData.notes) {
+        const currentNotes = await IndexedDBStorage.load(KEYS.NOTES, {});
+        const serverNotes = JSON.parse(serverData.notes);
+        const mergedNotes = { ...currentNotes };
 
-                Storage.saveNotes(mergedNotes);
+        Object.entries(serverNotes).forEach(([id, note]) => {
+            if (Validator.isValidWorkId(id) && !currentNotes[id]) {
+                mergedNotes[id] = note;
             }
+        });
 
-            // Merge author notes
-            if (serverData.authorNotes) {
-                const currentAuthorNotes = Storage.loadAuthorNotes();
-                const serverAuthorNotes = JSON.parse(serverData.authorNotes);
-                const mergedAuthorNotes = { ...currentAuthorNotes };
+        await IndexedDBStorage.save(KEYS.NOTES, mergedNotes);
+    }
 
-                Object.entries(serverAuthorNotes).forEach(([id, note]) => {
-                    if (Validator.isValidAuthorId(id) && !currentAuthorNotes[id]) {
-                        mergedAuthorNotes[id] = note;
-                    }
-                });
+    // Merge author notes
+    if (serverData.authorNotes) {
+        const currentAuthorNotes = await IndexedDBStorage.load(KEYS.AUTHOR_NOTES, {});
+        const serverAuthorNotes = JSON.parse(serverData.authorNotes);
+        const mergedAuthorNotes = { ...currentAuthorNotes };
 
-                Storage.saveAuthorNotes(mergedAuthorNotes);
+        Object.entries(serverAuthorNotes).forEach(([id, note]) => {
+            if (Validator.isValidAuthorId(id) && !currentAuthorNotes[id]) {
+                mergedAuthorNotes[id] = note;
             }
+        });
 
-            // Merge personal tags
-            if (serverData.personalTags) {
-                const currentPersonalTags = await IndexedDBStorage.load(KEYS.PERSONAL_TAGS, {});
-                const serverPersonalTags = JSON.parse(serverData.personalTags);
-                const mergedPersonalTags = { ...currentPersonalTags };
+        await IndexedDBStorage.save(KEYS.AUTHOR_NOTES, mergedAuthorNotes);
+    }
 
-                Object.entries(serverPersonalTags).forEach(([workId, tags]) => {
+    // Merge personal tags
+    if (serverData.personalTags) {
+        const currentPersonalTags = await IndexedDBStorage.load(KEYS.PERSONAL_TAGS, {});
+        const serverPersonalTags = JSON.parse(serverData.personalTags);
+        const mergedPersonalTags = { ...currentPersonalTags };
+
+        Object.entries(serverPersonalTags).forEach(([workId, tags]) => {
+            if (Validator.isValidWorkId(workId)) {
+                const currentTags = currentPersonalTags[workId] || [];
+                const combinedTags = [...new Set([...currentTags, ...tags])];
+                mergedPersonalTags[workId] = combinedTags;
+            }
+        });
+
+        await IndexedDBStorage.save(KEYS.PERSONAL_TAGS, mergedPersonalTags);
+    }
+
+    // Merge tag lookup
+    if (serverData.tagLookup) {
+        const currentTagLookup = await IndexedDBStorage.load(KEYS.TAG_LOOKUP, {});
+        const serverTagLookup = JSON.parse(serverData.tagLookup);
+        const mergedTagLookup = { ...currentTagLookup };
+
+        Object.entries(serverTagLookup).forEach(([tagName, works]) => {
+            if (Validator.isValidTagName(tagName)) {
+                const currentWorks = currentTagLookup[tagName] || {};
+                const mergedWorks = { ...currentWorks };
+
+                Object.entries(works).forEach(([workId, workInfo]) => {
                     if (Validator.isValidWorkId(workId)) {
-                        // Merge tags arrays, removing duplicates
-                        const currentTags = currentPersonalTags[workId] || [];
-                        const combinedTags = [...new Set([...currentTags, ...tags])];
-                        mergedPersonalTags[workId] = combinedTags;
+                        mergedWorks[workId] = workInfo;
                     }
                 });
 
-                await IndexedDBStorage.save(KEYS.PERSONAL_TAGS, mergedPersonalTags);
+                mergedTagLookup[tagName] = mergedWorks;
             }
+        });
 
-            // Merge tag to works mapping
-            if (serverData.tagLookup) {
-                const currentTagLookup = await IndexedDBStorage.load(KEYS.TAG_LOOKUP, {});
-                const serverTagLookup = JSON.parse(serverData.tagLookup);
-                const mergedTagLookup = { ...currentTagLookup };
+        await IndexedDBStorage.save(KEYS.TAG_LOOKUP, mergedTagLookup);
+    }
 
-                Object.entries(serverTagLookup).forEach(([tagName, works]) => {
-                    if (Validator.isValidTagName(tagName)) {
-                        const currentWorks = currentTagLookup[tagName] || {};
-                        const mergedWorks = { ...currentWorks };
-
-                        Object.entries(works).forEach(([workId, workInfo]) => {
-                            if (Validator.isValidWorkId(workId)) {
-                                mergedWorks[workId] = workInfo;
-                            }
-                        });
-
-                        mergedTagLookup[tagName] = mergedWorks;
-                    }
-                });
-
-                await IndexedDBStorage.save(KEYS.TAG_LOOKUP, mergedTagLookup);
-            }
-
-            // Merge tag links
-            if (serverData.tagLinks) {
-                const currentTagLinks = Storage.loadTagLinks();
-                const serverTagLinks = JSON.parse(serverData.tagLinks);
-                const mergedTagLinks = { ...currentTagLinks, ...serverTagLinks };
-                Storage.saveTagLinks(mergedTagLinks);
-            }
-        }
+    // Merge tag links
+    if (serverData.tagLinks) {
+        const currentTagLinks = await IndexedDBStorage.load(KEYS.TAG_LINKS, {});
+        const serverTagLinks = JSON.parse(serverData.tagLinks);
+        const mergedTagLinks = { ...currentTagLinks, ...serverTagLinks };
+        await IndexedDBStorage.save(KEYS.TAG_LINKS, mergedTagLinks);
+    }
+}
     }
 
   function trackDeletedTagWork(workId) {
@@ -584,7 +548,7 @@ function trackDeletedTag(tagName) {
 
     // Settings panel
     function createSettingsPanel() {
-        const settings = Storage.loadSyncSettings();
+            const settings = JSON.parse(localStorage.getItem(KEYS.SETTINGS) || '{}');
 
         const modal = UI.createModal(`
 <div style="margin:15px 0;display:flex;gap:10px;width:100%;">
@@ -649,16 +613,23 @@ modal.querySelector("#clear-old-deletions").addEventListener("click", async () =
             await window.syncManager.performSync();
         }
 
-        const deletedNotes = Storage.loadDeletedNotes();
-        const deletedAuthorNotes = Storage.loadDeletedAuthorNotes();
-        const deletedLabels = Storage.loadDeletedLabels();
-        const totalCleared = Object.keys(deletedNotes).length +
-                            Object.keys(deletedAuthorNotes).length +
-                            Object.keys(deletedLabels).length;
+const deletedNotes = await IndexedDBStorage.load(KEYS.DELETED_NOTES, {});
+const deletedAuthorNotes = await IndexedDBStorage.load(KEYS.DELETED_AUTHOR_NOTES, {});
+const deletedLabels = await IndexedDBStorage.load(KEYS.DELETED_LABELS, {});
+const deletedPersonalTags = await IndexedDBStorage.load(KEYS.DELETED_PERSONAL_TAGS, {});
+const deletedTagLookup = await IndexedDBStorage.load(KEYS.DELETED_TAG_LOOKUP, {});
 
-        Storage.saveDeletedNotes({});
-        Storage.saveDeletedAuthorNotes({});
-        Storage.saveDeletedLabels({});
+const totalCleared = Object.keys(deletedNotes).length +
+                    Object.keys(deletedAuthorNotes).length +
+                    Object.keys(deletedLabels).length +
+                    Object.keys(deletedPersonalTags).length +
+                    Object.keys(deletedTagLookup).length;
+
+await IndexedDBStorage.save(KEYS.DELETED_NOTES, {});
+await IndexedDBStorage.save(KEYS.DELETED_AUTHOR_NOTES, {});
+await IndexedDBStorage.save(KEYS.DELETED_LABELS, {});
+await IndexedDBStorage.save(KEYS.DELETED_PERSONAL_TAGS, {});
+await IndexedDBStorage.save(KEYS.DELETED_TAG_LOOKUP, {});
 
         // Update the innermost div content
         const innerDiv = progressModal.querySelector('div div div');
@@ -685,43 +656,43 @@ modal.querySelector("#clear-old-deletions").addEventListener("click", async () =
     }
 });
 
-      modal.querySelector("#save-settings").addEventListener("click", () => {
-            const newSettings = {
-                ...settings,
-                enabled: modal.querySelector("#sync-enabled").checked,
-                sheetUrl: modal.querySelector("#sheet-url").value,
-                syncInterval: parseInt(modal.querySelector("#sync-interval").value),
-                syncWidgetOpacity: parseFloat(modal.querySelector("#widget-opacity").value)
-            };
-            Storage.saveSyncSettings(newSettings);
-            alert("Settings saved! Please reload the page for changes to take effect.");
-            modal.remove();
-        });
+modal.querySelector("#save-settings").addEventListener("click", () => {
+    const newSettings = {
+        ...settings,
+        enabled: modal.querySelector("#sync-enabled").checked,
+        sheetUrl: modal.querySelector("#sheet-url").value,
+        syncInterval: parseInt(modal.querySelector("#sync-interval").value),
+        syncWidgetOpacity: parseFloat(modal.querySelector("#widget-opacity").value)
+    };
+    localStorage.setItem(KEYS.SETTINGS, JSON.stringify(newSettings));
+    alert("Settings saved! Please reload the page for changes to take effect.");
+    modal.remove();
+});
 
         modal.querySelector("#close-settings").addEventListener("click", () => {
             modal.remove();
         });
 
         // Export data
-        modal.querySelector("#export-data").addEventListener("click", async () => {
-            const exportData = {
-                labels: localStorage.getItem(KEYS.LABELS) || "{}",
-                notes: localStorage.getItem(KEYS.NOTES) || "{}",
-                authorNotes: localStorage.getItem(KEYS.AUTHOR_NOTES) || "{}",
-personalTags: JSON.stringify(await IndexedDBStorage.load(KEYS.PERSONAL_TAGS, {})),
-tagLookup: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LOOKUP, {})),
-tagLinks: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LINKS, {})),
-                exportDate: new Date().toISOString()
-            };
+modal.querySelector("#export-data").addEventListener("click", async () => {
+    const exportData = {
+        labels: JSON.stringify(await IndexedDBStorage.load(KEYS.LABELS, {})),
+        notes: JSON.stringify(await IndexedDBStorage.load(KEYS.NOTES, {})),
+        authorNotes: JSON.stringify(await IndexedDBStorage.load(KEYS.AUTHOR_NOTES, {})),
+        personalTags: JSON.stringify(await IndexedDBStorage.load(KEYS.PERSONAL_TAGS, {})),
+        tagLookup: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LOOKUP, {})),
+        tagLinks: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LINKS, {})),
+        exportDate: new Date().toISOString()
+    };
 
-            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `ao3-data-export-${new Date().toISOString().split('T')[0]}.json`;
-            a.click();
-            URL.revokeObjectURL(url);
-        });
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ao3-data-export-${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+});
 
         // Import data
         modal.querySelector("#import-data").addEventListener("click", () => {
@@ -733,24 +704,24 @@ tagLinks: JSON.stringify(await IndexedDBStorage.load(KEYS.TAG_LINKS, {})),
             if (!file) return;
 
             const reader = new FileReader();
-            reader.onload = async (e) => {
-                try {
-                    const importData = JSON.parse(e.target.result);
+reader.onload = async (e) => {
+    try {
+        const importData = JSON.parse(e.target.result);
 
-                    if (confirm(`Import data from ${importData.exportDate || 'unknown date'}? This will overwrite your current local data.`)) {
-                        localStorage.setItem(KEYS.LABELS, importData.labels || "{}");
-                        localStorage.setItem(KEYS.NOTES, importData.notes || "{}");
-                        localStorage.setItem(KEYS.AUTHOR_NOTES, importData.authorNotes || "{}");
-await IndexedDBStorage.save(KEYS.PERSONAL_TAGS, JSON.parse(importData.personalTags || "{}"));
-await IndexedDBStorage.save(KEYS.TAG_LOOKUP, JSON.parse(importData.tagLookup || "{}"));
-await IndexedDBStorage.save(KEYS.TAG_LINKS, JSON.parse(importData.tagLinks || "{}"));
+        if (confirm(`Import data from ${importData.exportDate || 'unknown date'}? This will overwrite your current local data.`)) {
+            await IndexedDBStorage.save(KEYS.LABELS, JSON.parse(importData.labels || "{}"));
+            await IndexedDBStorage.save(KEYS.NOTES, JSON.parse(importData.notes || "{}"));
+            await IndexedDBStorage.save(KEYS.AUTHOR_NOTES, JSON.parse(importData.authorNotes || "{}"));
+            await IndexedDBStorage.save(KEYS.PERSONAL_TAGS, JSON.parse(importData.personalTags || "{}"));
+            await IndexedDBStorage.save(KEYS.TAG_LOOKUP, JSON.parse(importData.tagLookup || "{}"));
+            await IndexedDBStorage.save(KEYS.TAG_LINKS, JSON.parse(importData.tagLinks || "{}"));
 
-                        alert("Data imported successfully! Please reload the page.");
-                    }
-                } catch (error) {
-                    alert("Error importing data: " + error.message);
-                }
-            };
+            alert("Data imported successfully! Please reload the page.");
+        }
+    } catch (error) {
+        alert("Error importing data: " + error.message);
+    }
+};
             reader.readAsText(file);
         });
     }
@@ -774,17 +745,18 @@ await IndexedDBStorage.save(KEYS.TAG_LINKS, JSON.parse(importData.tagLinks || "{
     }
 
     // Initialize sync manager
-    function initSyncManager() {
-
-        // Add sync button to navigation
+async function initSyncManager() {
+    try {
+        await IndexedDBStorage.initDB(); // Initialize IndexedDB first
         addSyncButton();
-
-        // Initialize sync manager if enabled
-        const settings = Storage.loadSyncSettings();
+        const settings = JSON.parse(localStorage.getItem(KEYS.SETTINGS) || '{}');
         if (settings.enabled && settings.sheetUrl) {
             new GoogleSyncManager();
         }
+    } catch (error) {
+        console.error("Failed to initialize Sync Manager:", error);
     }
+}
 
     // Run initialization
     if (document.readyState === 'loading') {

@@ -490,8 +490,8 @@ removeBtn.addEventListener('mouseleave', () => {
         }
     }
 
+
     // Function to show add tag input
-// Replace your existing showAddTagInput with this
 function showAddTagInput(e) {
     // If called as an event handler, e.currentTarget is the button clicked.
     // Otherwise, fall back to the first + button found inside tagsContainer.
@@ -696,6 +696,90 @@ suggestionBox.style.display = 'block';
             hideAddTagInput();
         }
     });
+}
+
+async function addPersonalTagsToSearchResults() {
+    console.log('Function running...');
+
+    // Find all work blurbs on search/listing pages
+    const workBlurbs = document.querySelectorAll('li.work.blurb.group');
+    console.log('Found blurbs:', workBlurbs.length);
+
+    if (!workBlurbs.length) return;
+
+    for (const blurb of workBlurbs) {
+        console.log('Processing blurb...');
+
+        // Skip if we already added personal tags to this blurb
+        if (blurb.querySelector('.personal-tags-search')) {
+            console.log('Already has personal tags, skipping');
+            continue;
+        }
+
+        // Extract work ID from the blurb
+        const workLink = blurb.querySelector('h4.heading a[href*="/works/"]');
+        console.log('Found work link:', workLink ? workLink.href : 'none');
+        if (!workLink) continue;
+
+        const match = workLink.href.match(/\/works\/(\d+)/);
+        console.log('Work ID match:', match);
+        if (!match) continue;
+
+        const workId = match[1];
+        console.log('Work ID:', workId);
+
+        // Get personal tags for this work
+        const personalTags = await getPersonalTags(workId);
+        console.log('Personal tags for work', workId, ':', personalTags);
+        if (!personalTags.length) continue;
+
+        // Find the existing tags ul to insert after it
+        const existingTagsUL = blurb.querySelector('ul.tags');
+        if (!existingTagsUL) continue;
+
+        // Create a new ul for personal tags
+        const personalTagsUL = document.createElement('ul');
+        personalTagsUL.className = 'tags commas personal-tags-search';
+        personalTagsUL.style.cssText = `
+            margin: 4px 0 0 0;
+            padding-left: 0;
+            list-style: none;
+        `;
+
+        // Add a label
+        const labelLi = document.createElement('li');
+        labelLi.style.cssText = `
+            display: inline;
+            color: #ccc;
+            font-style: italic;
+            margin-right: 0.5em;
+        `;
+        labelLi.textContent = 'Personal tags:';
+        personalTagsUL.appendChild(labelLi);
+
+        // Add each personal tag
+        personalTags.forEach((tag, index) => {
+            const li = document.createElement('li');
+            li.style.display = 'inline';
+
+            const tagLink = document.createElement('a');
+            tagLink.className = 'tag';
+            tagLink.textContent = tag;
+
+
+            // Set the link to use custom URL if available, otherwise default
+            getTagLink(tag).then(href => {
+                tagLink.href = href;
+            });
+
+            li.appendChild(tagLink);
+
+            personalTagsUL.appendChild(li);
+        });
+
+        // Insert the personal tags after the existing tags
+        existingTagsUL.parentNode.insertBefore(personalTagsUL, existingTagsUL.nextSibling);
+    }
 }
 
 async function addPersonalWorksToTagPage() {
@@ -1119,17 +1203,50 @@ return cleaned;
 
 async function init() {
     await Storage.initDB();
-        var path = window.location.pathname;
+    var path = window.location.pathname;
 
-        if (path.match(/\/works\/\d+/)) {
-            addTagsToWorkPage();
-        } else if (path.match(/\/tags\/[^\/]+\/works/)) {
-            addPersonalWorksToTagPage();
-        }
+    if (path.match(/\/works\/\d+/)) {
+        addTagsToWorkPage();
+} else if (path.match(/\/tags\/[^\/]+\/works/)) {
+    addPersonalWorksToTagPage();
+    // Also add personal tags to individual work blurbs on tag pages
+    setTimeout(addPersonalTagsToSearchResults, 500);
 
-        addPersonalTagsButton();
+    const observer = new MutationObserver(() => {
+        setTimeout(addPersonalTagsToSearchResults, 100);
+    });
 
+    const targetNode = document.querySelector('#main') || document.body;
+    observer.observe(targetNode, {
+        childList: true,
+        subtree: true
+    });
+} else if (
+        path.includes('/works') ||
+        path.includes('/search') ||
+        path.includes('/bookmarks') ||
+        path.includes('/series/') ||
+        path.includes('/collections/') ||
+        path.includes('/users/')
+    ) {
+        // Add personal tags to search results and listing pages
+        // Use a timeout to ensure the page content has loaded
+        setTimeout(addPersonalTagsToSearchResults, 500);
+
+        // Also add observer for infinite scroll or dynamic content
+        const observer = new MutationObserver(() => {
+            setTimeout(addPersonalTagsToSearchResults, 100);
+        });
+
+        const targetNode = document.querySelector('#main') || document.body;
+        observer.observe(targetNode, {
+            childList: true,
+            subtree: true
+        });
     }
+
+    addPersonalTagsButton();
+}
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);

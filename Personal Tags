@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AO3 Personal Tags
-// @version      1.3.1
+// @version      1.4
 // @description  Add personal tags to AO3 works with customizable links (Firefox 115 ESR Compatible)
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico

@@ -711,7 +711,7 @@ async function addPersonalTagsToSearchResults() {
         console.log('Processing blurb...');
 
         // Skip if we already added personal tags to this blurb
-        if (blurb.querySelector('[data-personal-tags-added]')) {
+        if (blurb.querySelector('.personal-tags-added')) {
             console.log('Already has personal tags, skipping');
             continue;
         }
@@ -739,16 +739,12 @@ async function addPersonalTagsToSearchResults() {
 
         // Create a new ul for personal tags
         const personalTagsUL = document.createElement('ul');
-        personalTagsUL.className = 'tags commas personal-tags-search';
+        personalTagsUL.className = 'tags commas personal-tags-search personal-tags-added';
         personalTagsUL.style.cssText = `
             margin: 4px 0 0 0;
             padding-left: 0;
             list-style: none;
         `;
-// Create a new ul for personal tags
-const personalTagsUL = document.createElement('ul');
-personalTagsUL.className = 'tags commas personal-tags-search';
-personalTagsUL.setAttribute('data-personal-tags-added', 'true'); // Add this line
 
         // Add a label
         const labelLi = document.createElement('li');
@@ -1259,4 +1255,3 @@ async function init() {
     }
 
 })();
-

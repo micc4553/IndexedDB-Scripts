@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         AO3 Personal Tags
-// @version      1.4
+// @version      1.4.1
 // @description  Add personal tags to AO3 works with customizable links (Firefox 115 ESR Compatible)
 // @match        https://archiveofourown.org/*
 // @icon         https://archiveofourown.org/favicon.ico
@@ -711,7 +711,7 @@ async function addPersonalTagsToSearchResults() {
         console.log('Processing blurb...');
 
         // Skip if we already added personal tags to this blurb
-        if (blurb.querySelector('.personal-tags-search')) {
+        if (blurb.querySelector('[data-personal-tags-added]')) {
             console.log('Already has personal tags, skipping');
             continue;
         }
@@ -745,6 +745,10 @@ async function addPersonalTagsToSearchResults() {
             padding-left: 0;
             list-style: none;
         `;
+// Create a new ul for personal tags
+const personalTagsUL = document.createElement('ul');
+personalTagsUL.className = 'tags commas personal-tags-search';
+personalTagsUL.setAttribute('data-personal-tags-added', 'true'); // Add this line
 
         // Add a label
         const labelLi = document.createElement('li');

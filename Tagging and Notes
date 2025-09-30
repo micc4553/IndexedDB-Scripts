@@ -1144,7 +1144,7 @@ handleWorkClick(e) {
                 const currentTag = Storage.loadLabels()[target.dataset.workId];
                 const tag = target.textContent;
                 if (currentTag !== tag) {
-                    target.style.background = '#f0f0f0';
+                    target.style.background = '#fff';
                 }
             }
         }
@@ -1156,7 +1156,7 @@ handleWorkClick(e) {
                 const currentTag = Storage.loadLabels()[target.dataset.workId];
                 const tag = target.textContent;
                 if (currentTag !== tag) {
-                    target.style.background = '#fff';
+                    target.style.background = '#eee';
                 }
             }
         }
